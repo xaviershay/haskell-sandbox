@@ -1,27 +1,30 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE FlexibleContexts #-}
 
+import Types
 import Parser
+import Evaluator
 import           Test.Tasty
 import           Test.Tasty.HUnit
 
 import qualified Data.HashSet           as S
 import qualified Data.Text              as T
+import qualified Data.Vector            as V
 
-relation :: [Identifier] -> [Row] -> Relation
-relation hs es = Relation { headers = hs, elements = S.fromList es }
+relation :: [Identifier] -> [[Identifier]] -> Relation
+relation hs es = Relation { headers = V.fromList hs, elements = S.fromList (map V.fromList es) }
 
 testData = (relation ["name", "age"] [["alice", "12"], ["bob", "13"]])
 
---eval :: Relation -> Query -> Either T.Text Relation
-eval env query = parseSql query
+doEval env query = case parseSql query of
+                    Right x -> runEval testData x
+                    Left _ -> relation [] []
 
 main :: IO ()
 main = do
   defaultMain $
     testGroup "SELECT"
       [ testCase "Test a thing" $
-          --(Right $ relation ["name"] [["alice"], ["bob"]]) @=?
-          (Right $ Select ["name"] (RelationFromEnv "person")) @=?
-            eval testData "SELECT name FROM person"
+          relation ["name"] [["alice"], ["bob"]] @=?
+            doEval testData "SELECT name FROM person"
       ]
