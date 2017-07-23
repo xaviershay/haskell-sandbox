@@ -11,11 +11,13 @@ import           Control.Monad.Identity (Identity)
 import Types
 
 type SqlParser = ParsecT T.Text (Maybe Expression) Identity Expression
-type ParseResult = Either ParseError Expression
+type ParseResult = Either UserString Expression
 
 
---parseSql :: Query -> ParseResult
-parseSql input = runParser sqlExpr () (T.unpack input) input
+parseSql :: UserString -> ParseResult
+parseSql input = transformError $ runParser sqlExpr () (T.unpack input) input
+  where
+    transformError = either (Left . T.pack . show) Right
 
 sqlExpr = select
 

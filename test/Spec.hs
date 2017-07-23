@@ -16,12 +16,10 @@ relation hs es = Relation { headers = V.fromList hs, elements = S.fromList (map 
 
 testData = putEnv "person" (relation ["name", "age"] [["alice", "12"], ["bob", "13"]]) emptyEnv
 
-doEval env query = case parseSql query of
-                    Right x -> runEval testData x
-                    Left y -> Left . T.pack . show $ y
+doEval env query = parseSql query >>= runEval testData
 
 main :: IO ()
-main = do
+main =
   defaultMain $
     testGroup "SELECT"
       [ testCase "Test a thing" $
