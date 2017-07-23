@@ -6,6 +6,8 @@ import qualified Data.Vector            as V
 import qualified Data.Map               as M
 
 import           Control.Monad.Reader
+import Control.Monad.Except
+import Control.Monad.Identity
 
 import Data.Hashable (Hashable(..))
 
@@ -33,7 +35,9 @@ putEnv = M.insert
 relationFromEnv :: Identifier -> Env -> Maybe Relation
 relationFromEnv = M.lookup
 
-type Eval a = Reader Env a
+type UserString = T.Text
+
+type Eval a = ExceptT UserString (ReaderT Env Identity) a
 
 instance (Hashable a) => Hashable (V.Vector a) where
   hashWithSalt salt = hashWithSalt salt . V.toList

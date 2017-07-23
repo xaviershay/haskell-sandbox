@@ -18,13 +18,13 @@ testData = putEnv "person" (relation ["name", "age"] [["alice", "12"], ["bob", "
 
 doEval env query = case parseSql query of
                     Right x -> runEval testData x
-                    Left _ -> relation [] []
+                    Left y -> Left . T.pack . show $ y
 
 main :: IO ()
 main = do
   defaultMain $
     testGroup "SELECT"
       [ testCase "Test a thing" $
-          relation ["name"] [["alice"], ["bob"]] @=?
+          (Right $ relation ["name"] [["alice"], ["bob"]]) @=?
             doEval testData "SELECT name FROM person"
       ]
