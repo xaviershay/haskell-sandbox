@@ -14,7 +14,9 @@ runEval env q = runReader (eval q) env
 eval :: Expression -> Eval Relation
 eval (RelationFromEnv name) = do
   env <- ask
-  return env
+  return $ case relationFromEnv name env of
+             Just x -> x
+             Nothing -> undefined
 
 eval (Project columns x) = do
   r@Relation { headers = prevHeaders, elements = prevElements } <- eval x

@@ -3,6 +3,7 @@ module Types where
 import qualified Data.HashSet           as S
 import qualified Data.Text              as T
 import qualified Data.Vector            as V
+import qualified Data.Map               as M
 
 import           Control.Monad.Reader
 
@@ -22,7 +23,15 @@ data Expression =
   RelationFromEnv Identifier
   deriving (Eq, Show)
 
-type Env = Relation
+type Env = M.Map Identifier Relation
+
+emptyEnv = M.empty
+
+putEnv :: Identifier -> Relation -> Env -> Env
+putEnv = M.insert
+
+relationFromEnv :: Identifier -> Env -> Maybe Relation
+relationFromEnv = M.lookup
 
 type Eval a = Reader Env a
 

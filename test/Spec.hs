@@ -14,7 +14,7 @@ import qualified Data.Vector            as V
 relation :: [Identifier] -> [[Identifier]] -> Relation
 relation hs es = Relation { headers = V.fromList hs, elements = S.fromList (map V.fromList es) }
 
-testData = (relation ["name", "age"] [["alice", "12"], ["bob", "13"]])
+testData = putEnv "person" (relation ["name", "age"] [["alice", "12"], ["bob", "13"]]) emptyEnv
 
 doEval env query = case parseSql query of
                     Right x -> runEval testData x
