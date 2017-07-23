@@ -19,17 +19,17 @@ eval :: Expression -> Eval Relation
 eval (RelationFromEnv name) = do
   env <- ask
   case relationFromEnv name env of
-    Just x -> return x
+    Just x  -> return x
     Nothing -> throwError ("relation '" <> name <> "' does not exist")
 
 eval (Project columns x) = do
   r@Relation { headers = prevHeaders, elements = prevElements } <- eval x
 
-  let indices = catMaybes $ V.map (\x -> V.elemIndex x prevHeaders) columns
+  let indices = catMaybes $ V.map (`V.elemIndex` prevHeaders) columns
   -- TODO: Use safe lookup
-  let f = \row -> V.map (\i -> row V.! i) indices
+  let f row = V.map (\i -> row V.! i) indices
 
-  return $ Relation {
+  return Relation {
     headers = columns,
     elements = S.map f prevElements
   }
