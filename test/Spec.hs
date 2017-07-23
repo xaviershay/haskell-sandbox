@@ -16,7 +16,11 @@ relation hs es = Relation { headers = V.fromList hs, elements = S.fromList (map 
 
 testData = putEnv "person" (relation ["name", "age"] [["alice", "12"], ["bob", "13"]]) emptyEnv
 
-doEval env query = parseSql query >>= runEval testData
+normalizeError :: (Show a) => Either a b -> Either UserString b
+normalizeError = either (Left . T.pack . show) Right
+
+doEval env query = (normalizeError . parseSql $ query) >>=
+                   (normalizeError . runEval testData)
 
 main :: IO ()
 main =

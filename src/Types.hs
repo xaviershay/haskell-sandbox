@@ -1,3 +1,4 @@
+{-# LANGUAGE OverloadedStrings #-}
 module Types where
 
 import qualified Data.HashSet           as S
@@ -10,6 +11,7 @@ import Control.Monad.Except
 import Control.Monad.Identity
 
 import Data.Hashable (Hashable(..))
+import Data.Monoid ((<>))
 
 type Identifier = T.Text
 type Query = T.Text
@@ -37,7 +39,13 @@ relationFromEnv = M.lookup
 
 type UserString = T.Text
 
-type Eval a = ExceptT UserString (ReaderT Env Identity) a
+data EvalError = RelationNotFound Identifier
+
+instance Show EvalError where
+  show (RelationNotFound x) = T.unpack ("relation '" <> x <> "' does not exist")
+
+
+type Eval a = ExceptT EvalError (ReaderT Env Identity) a
 
 instance (Hashable a) => Hashable (V.Vector a) where
   hashWithSalt salt = hashWithSalt salt . V.toList
