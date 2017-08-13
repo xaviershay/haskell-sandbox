@@ -7,6 +7,7 @@ import qualified Data.Vector            as V
 import qualified Data.Map               as M
 import Data.Maybe (fromJust)
 import Data.Bits (xor)
+import Text.Printf
 
 type UserString = String
 
@@ -25,6 +26,9 @@ data Command =
   Sub |
   Mod |
   Xor |
+  Vstore |
+  Vload |
+  Ifz |
   Noop |
   Exit
   deriving (Show)
@@ -33,6 +37,7 @@ data Program = Program {
   commands :: V.Vector Command,
   stack :: [Int],
   variables :: M.Map String Int,
+  vstore :: M.Map Int Int,
   instructionPointer :: Int
 } deriving (Show)
 
@@ -57,7 +62,10 @@ eval p = do
       putStrLn . show $ p
       return ()
     Just c -> do
-      putStrLn . show $ c
+--      putStrLn ""
+--      putStrLn . show $ p
+--      putStrLn . show $ c
+--      putStrLn ""
       p' <- evalCommand p { instructionPointer = instructionPointer p + 1 } c
       eval p'
 
@@ -65,7 +73,7 @@ evalCommand p Noop = return p
 evalCommand p ReadNum = return $ p { stack = 42:stack p }
 evalCommand p PrintByte = do
   let (byte:stack') = stack p
-  putStr . show $ byte
+  putStr $ printf "%c" byte
   return p { stack = stack' }
 
 evalCommand p Exit = return $ p { instructionPointer = V.length (commands p) }
@@ -83,6 +91,15 @@ evalCommand p (PushVar x) = return $ p { stack = value:stack p}
     value = case M.lookup x (variables p) of
       Nothing -> error ("Failed to lookup: " ++ x)
       Just x  -> x
+
+evalCommand p Vstore = return $ p { vstore = M.insert k v (vstore p), stack = stack'}
+  where
+    (v:k:stack') = stack p
+
+evalCommand p Vload = return $ p { stack = value:stack'}
+  where
+    (k:stack') = stack p
+    value = fromJust $ M.lookup k (vstore p)
 
 evalCommand p (PushConst x) = return $ p { stack = x:stack p}
 
@@ -114,6 +131,12 @@ evalCommand p Xor = return $ p { stack = result:stack' }
     result = b `xor` a
     (a:b:stack') = stack p
 
+evalCommand p Ifz = evalCommand (p { stack = to_call:stack' }) Jump
+  where
+    to_call = if v == 0 then if_t
+              else if_f
+    (if_f:if_t:v:stack') = stack p
+
 parse17 :: UserString -> ParseResult
 parse17 input = runParser xxx () input input
 
@@ -125,6 +148,7 @@ xxx = do
 
   return Program {
     variables = filterLabels 0 M.empty stream,
+    vstore = M.empty,
     commands = V.fromList (identifyStores . filterCommands $ stream),
     stack = [],
     instructionPointer = 0
@@ -157,7 +181,7 @@ comment = do
   return $ Comment x
 
 label17 = do
-  x <- many1 alphaNum
+  x <- many1 (alphaNum <|> char '_')
   string ":"
 
   return $ Label x
@@ -173,10 +197,15 @@ command = do
   <|> makeCommand "sub" Sub
   <|> makeCommand "mod" Mod
   <|> makeCommand "xor" Xor
+  <|> makeCommand "vstore" Vstore
+  <|> makeCommand "vload" Vload
+  <|> makeCommand "ifz" Ifz
   <|> makeCommand "store" (StoreVar "")
 
 makeCommand x t = do
-  try (string x)
+  try $ do
+    string x
+    whitespace
 
   return $ CommandToken t
  
@@ -186,5 +215,5 @@ constant = do
 
 variable = do
   x <- letter
-  y <- many alphaNum
+  y <- many (alphaNum <|> char '_')
   return $ CommandToken (PushVar (x:y))
