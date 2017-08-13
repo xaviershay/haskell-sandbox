@@ -9,6 +9,9 @@ test:  read_num
 end:   exit
 
 f:     r store
-       read_num
+       10 12 add
+       2 sub
+       6 mod
+       7 xor
        print_byte
        r jump

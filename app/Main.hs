@@ -6,6 +6,7 @@ import           Text.Parsec.Expr
 import qualified Data.Vector            as V
 import qualified Data.Map               as M
 import Data.Maybe (fromJust)
+import Data.Bits (xor)
 
 type UserString = String
 
@@ -16,9 +17,14 @@ data Command =
   ReadNum |
   Dup |
   PushVar String |
+  PushConst Int |
   StoreVar String |
   Call |
   Jump |
+  Add |
+  Sub |
+  Mod |
+  Xor |
   Noop |
   Exit
   deriving (Show)
@@ -78,6 +84,8 @@ evalCommand p (PushVar x) = return $ p { stack = value:stack p}
       Nothing -> error ("Failed to lookup: " ++ x)
       Just x  -> x
 
+evalCommand p (PushConst x) = return $ p { stack = x:stack p}
+
 evalCommand p Call = return $ p { instructionPointer = location, stack = (instructionPointer p):stack'}
   where
     (location:stack') = stack p
@@ -86,6 +94,26 @@ evalCommand p Jump = return $ p { instructionPointer = location, stack = stack' 
   where
     (location:stack') = stack p
 
+evalCommand p Add = return $ p { stack = result:stack' }
+  where
+    result = a + b
+    (a:b:stack') = stack p
+
+evalCommand p Sub = return $ p { stack = result:stack' }
+  where
+    result = b - a -- TODO: Could be other way around
+    (a:b:stack') = stack p
+
+evalCommand p Mod = return $ p { stack = result:stack' }
+  where
+    result = b `mod` a
+    (a:b:stack') = stack p
+
+evalCommand p Xor = return $ p { stack = result:stack' }
+  where
+    result = b `xor` a
+    (a:b:stack') = stack p
+
 parse17 :: UserString -> ParseResult
 parse17 input = runParser xxx () input input
 
@@ -93,7 +121,7 @@ parse17 input = runParser xxx () input input
 
 
 xxx = do
-  stream <- many (comment <|> try label17 <|> command <|> variable <|> whitespace)
+  stream <- many (comment <|> try label17 <|> command <|> constant <|> variable <|> whitespace)
 
   return Program {
     variables = filterLabels 0 M.empty stream,
@@ -141,6 +169,10 @@ command = do
   <|> makeCommand "dup" Dup
   <|> makeCommand "jump" Jump
   <|> makeCommand "call" Call
+  <|> makeCommand "add" Add
+  <|> makeCommand "sub" Sub
+  <|> makeCommand "mod" Mod
+  <|> makeCommand "xor" Xor
   <|> makeCommand "store" (StoreVar "")
 
 makeCommand x t = do
@@ -148,6 +180,11 @@ makeCommand x t = do
 
   return $ CommandToken t
  
+constant = do
+  x <- many1 digit
+  return $ CommandToken (PushConst $ read x)
+
 variable = do
-  x <- many1 alphaNum
-  return $ CommandToken (PushVar x)
+  x <- letter
+  y <- many alphaNum
+  return $ CommandToken (PushVar (x:y))
