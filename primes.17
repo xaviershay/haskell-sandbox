@@ -1,0 +1,170 @@
+/**
+ * Compute and print the list of prime numbers less than or equal
+ * to N, where N is read from stdin.
+ */
+
+main:           read_num dup
+                num store               /* num contains the upper limit */
+
+                done start ifz          /* exit if read_num returned zero */
+
+start:          /* do some sanity checks, this will help the people writing an interpreter */
+                sub_sanity_check call
+
+                /* init the vector, set all elements to 0 */
+                num 0 sub_init_vector call
+
+                /* compute the primes using the sieve of Eratosthenes algorithm */
+                num sub_compute_primes call
+
+                /* print vector */
+                num sub_print_primes call
+
+done:           exit
+
+/**
+ * Sub routine to make sure the interpreter is correct
+ */
+sub_sanity_check:
+                r store                 /* save the return address */
+
+                /* Check 1 */
+                10 12 add
+                2 sub
+                6 mod
+                7 xor
+                5 sub_assert call
+
+                /* Check 2 */
+                10 1 vstore
+                11 1 vstore
+                10 vload
+                11 vload
+                add
+                x store
+                x
+                2 sub_assert call
+
+                /* Check 3 */
+                1 x store
+                x
+                0 x store
+                1 sub_assert call
+
+                r jump                  /* return to where we came from */
+
+sub_assert:     /* print ok if the top numbers on the stack are equal */
+                s store
+                sub
+                sub_assert_ok
+                sub_assert_fail
+                ifz
+sub_assert_fail:
+                10 108 105 97 102
+                print_byte print_byte print_byte print_byte print_byte
+                exit
+
+sub_assert_ok:  10 107 79
+                print_byte print_byte print_byte
+
+                /* return to where we came from */
+                s jump
+
+/**
+ * Sub routine to init the vector from 1 to n
+ * param 1: n  number of elements to set
+ * param 2: v  value to set
+ */
+sub_init_vector:
+                r store                 /* r = ret address */
+
+                v store
+
+                /* simple init loop */
+init_vector_loop:
+
+                /* the offset is already on the stack */
+                dup v vstore
+
+                1 sub
+
+                dup init_vector_done init_vector_loop ifz
+
+init_vector_done:
+                r jump
+
+/**
+ * Subroutines to compute the primes <= n
+ * param 1: n
+ */
+sub_compute_primes:
+                r store                 /* r = ret address */
+
+                n store                 /* n = upper bound */
+
+                2 i store               /* i = 2 */
+
+while_i:        i j store               /* j = i */
+
+while_j:        /* loop on every multiple of i */
+                i j add j store         /* j += i */
+
+                /* check if we are done */
+                j n sub
+                while_j_done
+                while_j_not_done
+                ifg
+
+while_j_not_done:
+                j 1 vstore
+
+                while_j jump
+
+while_j_done:   1 i add i store
+
+                /* loop until i != n */
+                i n sub
+                while_i_done
+                while_i
+                ifz
+
+while_i_done:   r jump
+
+/**
+ * Subroutines to print the primes <= n
+ * param 1: n
+ */
+sub_print_primes:
+                r store                   /* r = ret address */
+
+                n store                   /* n = upper bound */
+
+                2 k store
+
+while_k:        k vload
+                k_prime
+                k_not_prime
+                ifz
+k_prime:        k
+                print_num
+                32                        /* 32 == space */
+                print_byte
+
+k_not_prime:    /* k = k + 1 */
+                k
+                1
+                add
+                k
+                store
+
+                /* loop until k != n */
+                k n sub
+                print_done
+                while_k
+                ifg
+
+print_done:     10                      /* 10 == new line */
+                print_byte
+
+                r
+                jump

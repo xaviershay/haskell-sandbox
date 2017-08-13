@@ -15,6 +15,7 @@ data Token = CommandToken Command | Comment String | Whitespace | Label String
 
 data Command =
   PrintByte |
+  PrintNum |
   ReadNum |
   Dup |
   PushVar String |
@@ -29,6 +30,7 @@ data Command =
   Vstore |
   Vload |
   Ifz |
+  Ifg |
   Noop |
   Exit
   deriving (Show)
@@ -45,7 +47,7 @@ type ParseResult = Either ParseError Program
 
 main :: IO ()
 main = do
-  contents <- readFile "test.17"
+  contents <- readFile "primes.17"
 
   case parse17 contents of
     Left x -> putStrLn $ show x
@@ -62,25 +64,27 @@ eval p = do
       putStrLn . show $ p
       return ()
     Just c -> do
---      putStrLn ""
---      putStrLn . show $ p
---      putStrLn . show $ c
---      putStrLn ""
+      --putStrLn $ printf "%d: %s\t%s" (instructionPointer p) (show c) (show $ stack p)
       p' <- evalCommand p { instructionPointer = instructionPointer p + 1 } c
       eval p'
 
 evalCommand p Noop = return p
-evalCommand p ReadNum = return $ p { stack = 42:stack p }
+evalCommand p ReadNum = return $ p { stack = 150:stack p }
 evalCommand p PrintByte = do
   let (byte:stack') = stack p
   putStr $ printf "%c" byte
   return p { stack = stack' }
 
+evalCommand p PrintNum = do
+  let (byte:stack') = stack p
+  putStr $ printf "%d" byte
+  return p { stack = stack' }
+
 evalCommand p Exit = return $ p { instructionPointer = V.length (commands p) }
---evalCommand p Dup = return $ p { stack = top:s }
---  where
---    s = stack p
---    top = head s
+
+evalCommand p Dup = return $ p { stack = top:top:stack' }
+  where
+    (top:stack') = stack p
 
 evalCommand p (StoreVar x) = return $ p { variables = M.insert x top (variables p), stack = stack' }
   where
@@ -137,6 +141,16 @@ evalCommand p Ifz = evalCommand (p { stack = to_call:stack' }) Jump
               else if_f
     (if_f:if_t:v:stack') = stack p
 
+evalCommand p Ifg = evalCommand (p { stack = to_call:stack' }) Jump
+  where
+    to_call = if v > 0 then if_t
+              else if_f
+    (if_f:if_t:v:stack') = stack p
+
+evalCommand p c = do
+  error $ "No implementation for: " ++ (show c)
+  return p
+
 parse17 :: UserString -> ParseResult
 parse17 input = runParser xxx () input input
 
@@ -188,6 +202,7 @@ label17 = do
 
 command = do
       makeCommand "print_byte" PrintByte
+  <|> makeCommand "print_num" PrintNum
   <|> makeCommand "read_num" ReadNum
   <|> makeCommand "exit" Exit
   <|> makeCommand "dup" Dup
@@ -200,6 +215,7 @@ command = do
   <|> makeCommand "vstore" Vstore
   <|> makeCommand "vload" Vload
   <|> makeCommand "ifz" Ifz
+  <|> makeCommand "ifg" Ifg
   <|> makeCommand "store" (StoreVar "")
 
 makeCommand x t = do

@@ -1,0 +1,157 @@
+                aa jump
+sub_sanity_check:
+                r store
+                10 12 add
+                2 sub
+                6 mod
+                7 xor
+                5 sub_assert call
+                10 1 vstore
+                11 1 vstore
+                10 vload
+                11 vload
+                add
+                x store
+                x
+                2 sub_assert call
+                1 x store
+                x
+                0 x store
+                1 sub_assert call
+                r jump
+sub_assert:     s store
+                sub
+                sub_assert_ok
+                sub_assert_fail
+                ifz
+sub_assert_fail:
+                10 108 105 97 102
+                print_byte print_byte print_byte print_byte print_byte
+                exit
+sub_assert_ok:  s jump
+aa:             sub_sanity_check call
+                45 103 97 108 102
+                print_byte print_byte print_byte print_byte print_byte
+                128 ab call
+                ac call
+                ad call
+                ae call
+                exit
+ae:             r store
+                0 i store
+                0 j store
+af:             read_byte dup b store
+                ag
+                ah
+                ifz
+ah:             1 i add 256 mod
+                i store
+                j i vload add 256 mod
+                j store
+                i vload t store
+                i j vload vstore
+                j t vstore
+                i vload
+                j vload
+                add
+                256
+                mod
+                vload
+                b xor
+                ai call
+                af jump
+ag:             10 print_byte
+                r jump
+ad:             r store
+                0 i store
+                0 j store
+ak:             j
+                i vload
+                i 1000 add vload
+                add add
+                256 mod
+                j store
+                i vload t store
+                i j vload vstore
+                j t vstore
+                i 1 add i store
+                i 256 sub
+                aj
+                ak
+                ifz
+aj:             r jump
+ac:             r store
+                1000 53 vstore
+                1001 51 vstore
+                1002 54 vstore
+                1003 49 vstore
+                1004 56 vstore
+                1005 49 vstore
+                1006 56 vstore
+                1007 51 vstore
+                1008 57 vstore
+                9 al call
+                r jump
+al:             rb store
+                dup m store
+                n store
+an:             n m mod
+                1000 add
+                vload
+                t store
+                n 1000 add
+                t
+                vstore
+                n 1 add
+                n store
+                n
+                256
+                sub
+                am
+                an
+                ifz
+am:             rb jump
+ab:             r store
+                0
+                256
+ap:             1 sub
+                dup dup vstore
+                dup ao ap ifz
+ao:             sub
+                r jump
+ai:             rr store
+                aq call
+                ar call
+                ar call
+                rr jump
+ar:             rrr store
+                9
+                sub
+                dup
+                as
+                at
+                ifg
+as:             96
+                add
+                print_byte
+                rrr jump
+at:             9
+                add
+                print_num
+                rrr jump
+aq:             rrr store
+                0 da store
+                dup 16 mod db store
+aw:             dup
+                db
+                sub
+                au
+                av
+                ifz
+av:             da 1 add da store
+                16 sub
+                aw jump
+au:             da
+                rrr jump
+/* -- Alok */
+
