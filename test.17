@@ -1,0 +1,6 @@
+/* hello */
+
+/* blah */
+test:  read_num
+       print_byte
+       exit
