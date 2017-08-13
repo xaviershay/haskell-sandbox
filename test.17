@@ -2,5 +2,13 @@
 
 /* blah */
 test:  read_num
+       x store
+       x
        print_byte
-       exit
+       f call
+end:   exit
+
+f:     r store
+       read_num
+       print_byte
+       r jump
