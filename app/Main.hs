@@ -58,9 +58,9 @@ main = do
   contents <- readFile "passmgr.17"
 
   case parse17 contents of
-    Left x -> putStrLn $ show x
+    Left x  -> print x
     Right x -> do
-      putStrLn $ show x
+      print x
       runEval x
 
 
@@ -78,11 +78,11 @@ eval = do
   p <- get
   case commands p V.!? instructionPointer p of
     Nothing -> do
-      liftIO $ putStrLn ""
-      liftIO . putStrLn . show $ p
+      liftIO . putStrLn $ ""
+      liftIO . putStrLn $ show p
       return ()
     Just c -> do
-      --liftIO $ putStrLn $ printf "%d: %s\t%s" (instructionPointer p) (show c) (show $ stack p)
+      --liftIO . putStrLn $ printf "%d: %s\t%s" (instructionPointer p) (show c) (show $ stack p)
       modify (\p -> p { instructionPointer = instructionPointer p + 1 })
       evalCommand c
       eval
@@ -92,7 +92,7 @@ evalCommand Noop = return ()
 evalCommand Break = do
   p <- get
   liftIO $ putStrLn "--- BREAK"
-  liftIO . putStrLn . show $ p
+  liftIO . print $ p
   readInput
   return ()
 
@@ -238,13 +238,13 @@ identifyStores (c:cs) = c:identifyStores cs
 identifyStores [] = []
 
 filterLabels :: Int -> M.Map String Int -> [Token] -> M.Map String Int
-filterLabels i m ((CommandToken c):xs) = filterLabels (i+1) m xs
-filterLabels i m ((Label c):xs) = filterLabels i (M.insert c i m) xs
+filterLabels i m (CommandToken c:xs) = filterLabels (i+1) m xs
+filterLabels i m (Label c:xs) = filterLabels i (M.insert c i m) xs
 filterLabels i m (x:xs) = filterLabels i m xs
 filterLabels i m [] = m
 
 filterCommands :: [Token] -> [Command]
-filterCommands ((CommandToken c):xs) = c:(filterCommands xs)
+filterCommands (CommandToken c:xs) = c:filterCommands xs
 filterCommands (x:xs) = filterCommands xs
 filterCommands [] = []
 
@@ -263,7 +263,7 @@ label17 = do
 
   return $ Label x
 
-command = do
+command =
       makeCommand "print_byte" PrintByte
   <|> makeCommand "print_num" PrintNum
   <|> makeCommand "read_byte" ReadByte
