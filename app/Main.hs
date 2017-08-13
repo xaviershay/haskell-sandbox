@@ -8,6 +8,8 @@ import           Data.Char            (ord)
 import qualified Data.Map             as M
 import           Data.Maybe           (fromJust)
 import qualified Data.Vector          as V
+import           System.Environment       (getArgs)
+import           System.Exit              (die)
 import           System.IO
 import           Text.Parsec          hiding (optional)
 import           Text.Parsec.Expr
@@ -55,12 +57,18 @@ type Eval a = ExceptT String (StateT Program IO) a
 
 main :: IO ()
 main = do
-  contents <- readFile "passmgr.17"
+  args  <- getArgs
+
+  sourceFile <- case args of
+                  [x] -> return x
+                  _   -> die "Usage: run17 src.17"
+
+  contents <- readFile sourceFile
 
   case parse17 contents of
     Left x  -> print x
     Right x -> do
-      print x
+      --print x
       runEval x
 
 
@@ -78,8 +86,8 @@ eval = do
   p <- get
   case commands p V.!? instructionPointer p of
     Nothing -> do
-      liftIO . putStrLn $ ""
-      liftIO . putStrLn $ show p
+      --liftIO . putStrLn $ ""
+      --liftIO . putStrLn $ show p
       return ()
     Just c -> do
       --liftIO . putStrLn $ printf "%d: %s\t%s" (instructionPointer p) (show c) (show $ stack p)
