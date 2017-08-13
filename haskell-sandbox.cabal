@@ -36,6 +36,7 @@ executable haskell-sandbox-exe
                      , containers
                      , unordered-containers
                      , vector
+                     , mtl
   default-language:    Haskell2010
 
 test-suite haskell-sandbox-test

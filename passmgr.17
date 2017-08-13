@@ -30,39 +30,71 @@ sub_assert_fail:
                 exit
 sub_assert_ok:  s jump
 aa:             sub_sanity_check call
+
+                /* Print "flag-" */
                 45 103 97 108 102
                 print_byte print_byte print_byte print_byte print_byte
-                128 ab call
-                ac call
-                ad call
-                ae call
+
+                128 fill_low_mem call
+                setup_mem call /* Set up the vector memory? */
+
+                shuffle_mem call /* do something */
+                start_read_loop call /* read loop */
                 exit
-ae:             r store
-                0 i store
-                0 j store
-af:             read_byte dup b store
+
+
+
+
+
+
+start_read_loop:  r store
+                  0 i store
+                  0 j store
+
+
+
+read_char:      read_byte dup b store /* Read char, quit (ag) on null */
                 ag
                 ah
                 ifz
-ah:             1 i add 256 mod
+
+                /* i is a for loop counter */
+ah:             /* add one to i, wrap around at 255 */
+                1 i add 256 mod
                 i store
+
+                /* Load up i from mem table, add to j, wrap at 255 */
                 j i vload add 256 mod
-                j store
+                j store /* store new value to j. Not reset every loop! */
+
+                /* Switch (i, j) mem positions */
                 i vload t store
                 i j vload vstore
                 j t vstore
+
+
                 i vload
                 j vload
                 add
                 256
                 mod
                 vload
-                b xor
-                ai call
-                af jump
-ag:             10 print_byte
+                b xor /* xor input with *i + *j */
+
+                print_hex_digit call /* Print hex digit */
+                read_char jump /* Loop, read next char */
+ag:             10 print_byte /* print new line */
                 r jump
-ad:             r store
+
+
+
+
+
+
+
+
+/* Shuffle bytes 0-256 of vector memory based on contents of 1000-1255 */
+shuffle_mem:    r store
                 0 i store
                 0 j store
 ak:             j
@@ -80,7 +112,10 @@ ak:             j
                 ak
                 ifz
 aj:             r jump
-ac:             r store
+
+
+/* Set up vector memory from 1000 - 1255 */
+setup_mem:             r store
                 1000 53 vstore
                 1001 51 vstore
                 1002 54 vstore
@@ -90,9 +125,15 @@ ac:             r store
                 1006 56 vstore
                 1007 51 vstore
                 1008 57 vstore
-                9 al call
+                9 fill_mem call
                 r jump
-al:             rb store
+
+    /* ---*/
+
+
+/* Fill memory from 1000 to 255 with x (9) chars */
+
+fill_mem:             rb store
                 dup m store
                 n store
 an:             n m mod
@@ -111,7 +152,9 @@ an:             n m mod
                 an
                 ifz
 am:             rb jump
-ab:             r store
+
+/* Fills 0-255 mem with corresponding number (e.g. 36 = 36) */
+fill_low_mem:             r store
                 0
                 256
 ap:             1 sub
@@ -119,11 +162,14 @@ ap:             1 sub
                 dup ao ap ifz
 ao:             sub
                 r jump
-ai:             rr store
+
+/* ------- Print hex digit */
+print_hex_digit:             rr store
                 aq call
                 ar call
                 ar call
                 rr jump
+
 ar:             rrr store
                 9
                 sub
@@ -153,5 +199,5 @@ av:             da 1 add da store
                 aw jump
 au:             da
                 rrr jump
-/* -- Alok */
+/* ---------------- END HEX DIGIT ---- */
 

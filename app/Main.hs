@@ -1,22 +1,28 @@
 {-# LANGUAGE FlexibleContexts #-}
 module Main where
 
-import           Text.Parsec            hiding ( optional)
+import           Control.Monad.Except
+import           Control.Monad.State
+import           Data.Bits            (xor)
+import           Data.Char            (ord)
+import qualified Data.Map             as M
+import           Data.Maybe           (fromJust)
+import qualified Data.Vector          as V
+import           System.IO
+import           Text.Parsec          hiding (optional)
 import           Text.Parsec.Expr
-import qualified Data.Vector            as V
-import qualified Data.Map               as M
-import Data.Maybe (fromJust)
-import Data.Bits (xor)
-import Text.Printf
+import           Text.Printf
 
 type UserString = String
 
 data Token = CommandToken Command | Comment String | Whitespace | Label String
 
 data Command =
+  Break |
   PrintByte |
   PrintNum |
   ReadNum |
+  ReadByte |
   Dup |
   PushVar String |
   PushConst Int |
@@ -45,126 +51,183 @@ data Program = Program {
 
 type ParseResult = Either ParseError Program
 
+type Eval a = ExceptT String (StateT Program IO) a
+
 main :: IO ()
 main = do
-  contents <- readFile "primes.17"
+  contents <- readFile "passmgr.17"
 
   case parse17 contents of
     Left x -> putStrLn $ show x
     Right x -> do
       putStrLn $ show x
-      eval x
+      runEval x
 
 
-eval :: Program -> IO ()
-eval p = do
+---
+--- EVALUATION
+---
+
+runEval :: Program -> IO ()
+runEval p = do
+  _ <- runStateT (runExceptT eval) p
+  return ()
+
+eval :: Eval ()
+eval = do
+  p <- get
   case commands p V.!? instructionPointer p of
     Nothing -> do
-      putStrLn ""
-      putStrLn . show $ p
+      liftIO $ putStrLn ""
+      liftIO . putStrLn . show $ p
       return ()
     Just c -> do
-      --putStrLn $ printf "%d: %s\t%s" (instructionPointer p) (show c) (show $ stack p)
-      p' <- evalCommand p { instructionPointer = instructionPointer p + 1 } c
-      eval p'
+      --liftIO $ putStrLn $ printf "%d: %s\t%s" (instructionPointer p) (show c) (show $ stack p)
+      modify (\p -> p { instructionPointer = instructionPointer p + 1 })
+      evalCommand c
+      eval
 
-evalCommand p Noop = return p
-evalCommand p ReadNum = return $ p { stack = 150:stack p }
-evalCommand p PrintByte = do
-  let (byte:stack') = stack p
-  putStr $ printf "%c" byte
-  return p { stack = stack' }
+evalCommand :: Command -> Eval ()
+evalCommand Noop = return ()
+evalCommand Break = do
+  p <- get
+  liftIO $ putStrLn "--- BREAK"
+  liftIO . putStrLn . show $ p
+  readInput
+  return ()
 
-evalCommand p PrintNum = do
-  let (byte:stack') = stack p
-  putStr $ printf "%d" byte
-  return p { stack = stack' }
+-- TODO: Proper error handling
+evalCommand ReadNum = readInput >>= pushStack . read
+evalCommand ReadByte = readChar >>= pushStack . ord
 
-evalCommand p Exit = return $ p { instructionPointer = V.length (commands p) }
+evalCommand PrintByte = printChar "%c"
+evalCommand PrintNum  = printChar "%d"
 
-evalCommand p Dup = return $ p { stack = top:top:stack' }
-  where
-    (top:stack') = stack p
+evalCommand Exit =
+  modify (\p -> p { instructionPointer = V.length (commands p) })
 
-evalCommand p (StoreVar x) = return $ p { variables = M.insert x top (variables p), stack = stack' }
-  where
-    (top:stack') = stack p
+evalCommand Dup = do
+  x <- popStack
+  pushStack x
+  pushStack x
 
-evalCommand p (PushVar x) = return $ p { stack = value:stack p}
-  where
-    value = case M.lookup x (variables p) of
-      Nothing -> error ("Failed to lookup: " ++ x)
-      Just x  -> x
+evalCommand (StoreVar var) = do
+  x <- popStack
+  
+  modify (\p -> p { variables = M.insert var x (variables p) })
 
-evalCommand p Vstore = return $ p { vstore = M.insert k v (vstore p), stack = stack'}
-  where
-    (v:k:stack') = stack p
+evalCommand (PushVar var) = do
+  p <- get
 
-evalCommand p Vload = return $ p { stack = value:stack'}
-  where
-    (k:stack') = stack p
-    value = fromJust $ M.lookup k (vstore p)
+  value <- case M.lookup var (variables p) of
+             Nothing -> throwError ("Failed to lookup: " ++ var)
+             Just x  -> return x
 
-evalCommand p (PushConst x) = return $ p { stack = x:stack p}
+  pushStack value
 
-evalCommand p Call = return $ p { instructionPointer = location, stack = (instructionPointer p):stack'}
-  where
-    (location:stack') = stack p
+evalCommand Vstore = do
+  v <- popStack
+  k <- popStack
 
-evalCommand p Jump = return $ p { instructionPointer = location, stack = stack' }
-  where
-    (location:stack') = stack p
+  modify (\p -> p { vstore = M.insert k v (vstore p)})
 
-evalCommand p Add = return $ p { stack = result:stack' }
-  where
-    result = a + b
-    (a:b:stack') = stack p
+evalCommand Vload = do
+  p <- get
+  k <- popStack
 
-evalCommand p Sub = return $ p { stack = result:stack' }
-  where
-    result = b - a -- TODO: Could be other way around
-    (a:b:stack') = stack p
+  value <- case M.lookup k (vstore p) of
+             Nothing -> throwError ("No entry in vstore for: " ++ show k)
+             Just x  -> return x
 
-evalCommand p Mod = return $ p { stack = result:stack' }
-  where
-    result = b `mod` a
-    (a:b:stack') = stack p
+  pushStack value
 
-evalCommand p Xor = return $ p { stack = result:stack' }
-  where
-    result = b `xor` a
-    (a:b:stack') = stack p
+evalCommand (PushConst x) = pushStack x
 
-evalCommand p Ifz = evalCommand (p { stack = to_call:stack' }) Jump
-  where
-    to_call = if v == 0 then if_t
-              else if_f
-    (if_f:if_t:v:stack') = stack p
+evalCommand Jump = do
+  target <- popStack
 
-evalCommand p Ifg = evalCommand (p { stack = to_call:stack' }) Jump
-  where
-    to_call = if v > 0 then if_t
-              else if_f
-    (if_f:if_t:v:stack') = stack p
+  modify (\p -> p { instructionPointer = target })
 
-evalCommand p c = do
-  error $ "No implementation for: " ++ (show c)
-  return p
+evalCommand Call = do
+  p      <- get
+  target <- popStack
+
+  pushStack $ instructionPointer p
+  modify (\p -> p { instructionPointer = target })
+
+evalCommand Add = binaryOp (+)
+evalCommand Sub = binaryOp $ flip (-)
+evalCommand Mod = binaryOp $ flip mod
+evalCommand Xor = binaryOp xor
+
+evalCommand Ifz = ifc (0 ==)
+evalCommand Ifg = ifc (0 <)
+
+readInput :: Eval String
+readInput = do
+  liftIO $ hSetEcho stdout True
+  liftIO getLine
+
+readChar :: Eval Char
+readChar = do
+  liftIO $ hSetEcho stdout False
+  liftIO getChar
+
+pushStack :: Int -> Eval ()
+pushStack x = modify (\p -> p { stack = x:stack p })
+
+popStack :: Eval Int
+popStack = do
+  p <- get
+  
+  case stack p of
+    (x:xs) -> do
+      modify (\p -> p { stack = xs })
+      return x
+    _      -> throwError "Cannot pop an empty stack"
+
+binaryOp f = do
+  a <- popStack
+  b <- popStack
+
+  pushStack $ f a b
+
+ifc f = do
+  if_f <- popStack
+  if_t <- popStack
+  v    <- popStack
+
+  let target = if f v then if_t else if_f
+
+  pushStack target
+  evalCommand Jump
+
+printChar fstr = do
+  byte <- popStack
+  liftIO . putStr $ printf fstr byte
+  liftIO . hFlush $ stdout 
+
+--
+-- PARSING
+--
 
 parse17 :: UserString -> ParseResult
-parse17 input = runParser xxx () input input
+parse17 input = runParser grammar () input input
 
---grammar = many (comment <|> try label17 <|> command <|> variable <|> whitespace)
-
-
-xxx = do
-  stream <- many (comment <|> try label17 <|> command <|> constant <|> variable <|> whitespace)
+grammar = do
+  stream <- many $
+                  comment
+              <|> try label17
+              <|> command
+              <|> constant
+              <|> variable
+              <|> whitespace
 
   return Program {
-    variables = filterLabels 0 M.empty stream,
-    vstore = M.empty,
-    commands = V.fromList (identifyStores . filterCommands $ stream),
-    stack = [],
+    variables          = filterLabels 0 M.empty stream,
+    vstore             = M.empty,
+    commands           = V.fromList (identifyStores . filterCommands $ stream),
+    stack              = [],
     instructionPointer = 0
   }
 
@@ -203,6 +266,7 @@ label17 = do
 command = do
       makeCommand "print_byte" PrintByte
   <|> makeCommand "print_num" PrintNum
+  <|> makeCommand "read_byte" ReadByte
   <|> makeCommand "read_num" ReadNum
   <|> makeCommand "exit" Exit
   <|> makeCommand "dup" Dup
@@ -216,6 +280,7 @@ command = do
   <|> makeCommand "vload" Vload
   <|> makeCommand "ifz" Ifz
   <|> makeCommand "ifg" Ifg
+  <|> makeCommand "break" Break
   <|> makeCommand "store" (StoreVar "")
 
 makeCommand x t = do
