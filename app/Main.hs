@@ -1,6 +1,10 @@
+{-# LANGUAGE TemplateHaskell   #-}
+{-# LANGUAGE DeriveGeneric     #-}
 {-# LANGUAGE FlexibleContexts #-}
+
 module Main where
 
+import           Control.Lens           hiding (Const)
 import           Control.Monad.Except
 import           Control.Monad.State
 import           Data.Bits            (xor)
@@ -8,6 +12,7 @@ import           Data.Char            (ord)
 import qualified Data.Map             as M
 import           Data.Maybe           (fromJust)
 import qualified Data.Vector          as V
+import           GHC.Generics
 import           System.Environment       (getArgs)
 import           System.Exit              (die)
 import           System.IO
@@ -44,12 +49,14 @@ data Command =
   deriving (Show)
 
 data Program = Program {
-  commands :: V.Vector Command,
-  stack :: [Int],
-  variables :: M.Map String Int,
-  vstore :: M.Map Int Int,
-  instructionPointer :: Int
-} deriving (Show)
+  _commands :: V.Vector Command,
+  _stack :: [Int],
+  _variables :: M.Map String Int,
+  _vstore :: M.Map Int Int,
+  _instructionPointer :: Int
+} deriving (Show, Generic)
+
+makeLenses ''Program
 
 type ParseResult = Either ParseError Program
 
@@ -83,15 +90,17 @@ runEval p = do
 
 eval :: Eval ()
 eval = do
-  p <- get
-  case commands p V.!? instructionPointer p of
+  i <- use instructionPointer
+  nextCommand <- uses commands (V.!? i)
+
+  case nextCommand of
     Nothing -> do
       --liftIO . putStrLn $ ""
       --liftIO . putStrLn $ show p
       return ()
     Just c -> do
       --liftIO . putStrLn $ printf "%d: %s\t%s" (instructionPointer p) (show c) (show $ stack p)
-      modify (\p -> p { instructionPointer = instructionPointer p + 1 })
+      instructionPointer += 1
       evalCommand c
       eval
 
@@ -111,8 +120,7 @@ evalCommand ReadByte = readChar >>= pushStack . ord
 evalCommand PrintByte = printChar "%c"
 evalCommand PrintNum  = printChar "%d"
 
-evalCommand Exit =
-  modify (\p -> p { instructionPointer = V.length (commands p) })
+evalCommand Exit = instructionPointer <~ uses commands length
 
 evalCommand Dup = do
   x <- popStack
@@ -121,47 +129,43 @@ evalCommand Dup = do
 
 evalCommand (StoreVar var) = do
   x <- popStack
-  
-  modify (\p -> p { variables = M.insert var x (variables p) })
+
+  variables %= M.insert var x
 
 evalCommand (PushVar var) = do
-  p <- get
+  value <- uses variables $ M.lookup var
 
-  value <- case M.lookup var (variables p) of
-             Nothing -> throwError ("Failed to lookup: " ++ var)
-             Just x  -> return x
-
-  pushStack value
+  case value of
+    Nothing -> throwError ("Failed to lookup: " ++ var)
+    Just x  -> pushStack x
 
 evalCommand Vstore = do
   v <- popStack
   k <- popStack
 
-  modify (\p -> p { vstore = M.insert k v (vstore p)})
+  vstore %= M.insert k v
 
 evalCommand Vload = do
-  p <- get
   k <- popStack
+  value <- uses vstore $ M.lookup k
 
-  value <- case M.lookup k (vstore p) of
-             Nothing -> throwError ("No entry in vstore for: " ++ show k)
-             Just x  -> return x
-
-  pushStack value
+  case value of
+    Nothing -> throwError ("No entry in vstore for: " ++ show k)
+    Just x  -> pushStack x
 
 evalCommand (PushConst x) = pushStack x
 
 evalCommand Jump = do
   target <- popStack
 
-  modify (\p -> p { instructionPointer = target })
+  instructionPointer .= target
 
 evalCommand Call = do
-  p      <- get
-  target <- popStack
+  current <- use instructionPointer
+  target  <- popStack
 
-  pushStack $ instructionPointer p
-  modify (\p -> p { instructionPointer = target })
+  pushStack current
+  instructionPointer .= target
 
 evalCommand Add = binaryOp (+)
 evalCommand Sub = binaryOp $ flip (-)
@@ -182,15 +186,15 @@ readChar = do
   liftIO getChar
 
 pushStack :: Int -> Eval ()
-pushStack x = modify (\p -> p { stack = x:stack p })
+pushStack x = stack %= (:) x
 
 popStack :: Eval Int
 popStack = do
   p <- get
   
-  case stack p of
+  case _stack p of
     (x:xs) -> do
-      modify (\p -> p { stack = xs })
+      stack .= xs
       return x
     _      -> throwError "Cannot pop an empty stack"
 
@@ -219,6 +223,14 @@ printChar fstr = do
 -- PARSING
 --
 
+emptyProgram = Program {
+  _variables          = M.empty,
+  _vstore             = M.empty,
+  _commands           = mzero,
+  _stack              = mzero,
+  _instructionPointer = 0
+}
+
 parse17 :: UserString -> ParseResult
 parse17 input = runParser grammar () input input
 
@@ -231,12 +243,9 @@ grammar = do
               <|> variable
               <|> whitespace
 
-  return Program {
-    variables          = filterLabels 0 M.empty stream,
-    vstore             = M.empty,
-    commands           = V.fromList (identifyStores . filterCommands $ stream),
-    stack              = [],
-    instructionPointer = 0
+  return emptyProgram {
+    _variables          = filterLabels 0 M.empty stream,
+    _commands           = V.fromList (identifyStores . filterCommands $ stream)
   }
 
 identifyStores :: [Command] -> [Command]
