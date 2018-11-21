@@ -21,18 +21,32 @@
 module Main where
 
 import Data.List
+import Data.Maybe (catMaybes, isNothing)
 import Data.Monoid ((<>))
 import Control.Monad (msum)
 import Text.Parsec( runParser, char, (<|>), ParseError, many, many1, digit, eof)
 
 data Restriction a = Any | Specific a deriving (Show)
 
-data Color = Red | Green | White | Black | Blue deriving (Show, Eq)
+data Color = Red | Green | White | Black | Blue deriving (Eq)
 --data SpellType = Creature | Instant | Sorcery | Enchantment | Artifact
 
 data ManaSpec = ManaSpec (Restriction Color) deriving (Show)
 
-data ManaPool = ManaPool [Maybe Color] deriving (Show)
+data ManaPool = ManaPool [Maybe Color]
+
+instance Show ManaPool where
+  show (ManaPool cs) = (showColorless . length . filter isNothing $ cs) <> (msum . map show . catMaybes $ cs)
+    where
+      showColorless 0 = ""
+      showColorless n = show n
+
+instance Show Color where
+  show Red = "R"
+  show Blue = "B"
+  show Green = "G"
+  show Black = "B"
+  show White = "W"
 
 data ManaAbility = ManaAbility ManaPool deriving (Show)
 
