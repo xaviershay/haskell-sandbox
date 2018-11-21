@@ -21,7 +21,9 @@
 module Main where
 
 import Data.List
+import Data.Monoid ((<>))
 import Control.Monad (msum)
+import Text.Parsec( runParser, char, (<|>), ParseError, many, many1, digit, eof)
 
 data Restriction a = Any | Specific a deriving (Show)
 
@@ -71,25 +73,51 @@ deleteAt idx xs = lft ++ rgt
   where (lft, (_:rgt)) = splitAt idx xs
 
 
-solve :: ManaSource a => Cost -> [a] -> Maybe [a]
-solve cost sources = solve' [] cost (reverse $ sortOn versatility sources)
+solve :: ManaSource a => Cost -> [Cost] -> [a] -> Maybe [a]
+solve cost futureCosts sources = solve' [] cost futureCosts (sortOn versatility sources)
 
-solve' :: ManaSource a => [a] -> Cost -> [a] -> Maybe [a]
-solve' result [] _ = Just result
-solve' result (cost:rest) sources =
+solve' :: ManaSource a => [a] -> Cost -> [Cost] -> [a] -> Maybe [a]
+solve' result [] futureCosts _ = Just result
+solve' result (cost:rest) futureCosts sources =
   let possibleSources = findIndices (satisfy cost) sources in
-  let solves = map (\i -> solve' (sources !! i : result) rest (deleteAt i sources)) possibleSources in
+  let solves = map (\i -> solve' (sources !! i : result) rest futureCosts (deleteAt i sources)) possibleSources in
 
   msum solves
 
+parseManaString :: String -> Either ParseError ([Maybe Color])
+parseManaString input = runParser manaExpr () input input
+
+manaExpr = do
+  result <- many manaChar
+  _ <- eof
+
+  return (mconcat result)
+
+manaChar =
+      (char 'R' >> return [Just Red])
+  <|> (char 'U' >> return [Just Blue])
+  <|> (char 'B' >> return [Just Black])
+  <|> (char 'G' >> return [Just Green])
+  <|> (char 'W' >> return [Just White])
+  <|> (many1 digit >>= (\n -> return $ replicate (read n) Nothing))
+mkCost input = case parseManaString input of
+                 Right colors -> map toRestriction colors
+                 Left err -> error (show err)
+ where
+   toRestriction (Just x) = ManaSpec (Specific Red)
+   toRestriction Nothing = ManaSpec Any
+
+mkSource inputs = case sequence $ map parseManaString inputs of
+                     Right colors -> Card { cost = mempty, manaAbilities = map (ManaAbility . ManaPool) colors }
+                     Left err -> error (show err)
 main = do
-  let cost = [ManaSpec Any, ManaSpec Any, ManaSpec (Specific Red)]
+  let cost = mkCost "1R"
+  let futureCosts = [[ManaSpec (Specific Blue)]]
   let sources =
-                [ mkLand Red
-                , mkLand White
-                , mkDualLand [Blue, Green]
-                , mkLand White
-                , mkLand White
+                [ mkSource ["R"]
+                , mkSource ["1"]
+                , mkSource ["U", "G"]
+                , mkSource ["R", "W"]
                 ]
 
-  putStrLn . show . fmap (map manaAbilities) $ solve cost sources
+  putStrLn . show . fmap (map manaAbilities) $ solve cost futureCosts sources
