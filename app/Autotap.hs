@@ -7,10 +7,17 @@
 -- hope of hitting a Shock off a draw effect.) This implementation aims only to
 -- make the best decision given known information, i.e. finding a tapping
 -- combination that allows for a unique superset of remaining abilities to be
--- played. In the case of ambiguity (should we leave up Blue or Green mana,
+-- played. In the case of ambiguity (should we leave up Blue or Red mana,
 -- having spells for each?) a partial result is returned.
 --
 -- (Note: this documentation describes desired state, not current)
+--
+-- TODO:
+-- * Consider other abilities in hand/on board.
+-- * Consider mana abilities that produce more than one mana.
+-- * Consider restricted mana ("only spend this on non-creature spells")
+-- * Use a more efficient data structure than [], particularly considering
+--   index operations. (probably `Seq`)
 module Main where
 
 import Data.List
