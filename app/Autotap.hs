@@ -1,3 +1,6 @@
+{-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE DeriveGeneric #-}
+
 -- An algorithm for figuring out which mana sources to tap to pay for a spell
 -- in Magic: The Gathering. Goals are to prefer failure or partial success when
 -- unsure of best solution.
@@ -21,15 +24,21 @@
 module Main where
 
 import Data.List
-import Data.Maybe (catMaybes, isNothing)
+import Data.Hashable
+import GHC.Generics
+import qualified Data.Tuple
+import qualified Data.HashMap.Strict as M
+import Data.Maybe (catMaybes, isNothing, fromJust)
 import Data.Monoid ((<>))
 import Control.Monad (msum)
-import Text.Parsec( runParser, char, (<|>), ParseError, many, many1, digit, eof)
+import Text.Parsec( runParser, char, (<|>), ParseError, many, many1, digit, eof, choice)
 
 data Restriction a = Any | Specific a deriving (Show)
 
-data Color = Red | Green | White | Black | Blue deriving (Eq)
+data Color = Red | Green | White | Black | Blue deriving (Eq, Generic)
 --data SpellType = Creature | Instant | Sorcery | Enchantment | Artifact
+
+instance Hashable Color
 
 data ManaSpec = ManaSpec (Restriction Color) deriving (Show)
 
@@ -41,12 +50,18 @@ instance Show ManaPool where
       showColorless 0 = ""
       showColorless n = show n
 
+colorChars =
+  [ ('R', Red)
+  , ('U', Blue)
+  , ('B', Black)
+  , ('G', Green)
+  , ('W', White)
+  ]
+
+inverseColorChars = M.fromList . map Data.Tuple.swap $ colorChars
+
 instance Show Color where
-  show Red = "R"
-  show Blue = "B"
-  show Green = "G"
-  show Black = "B"
-  show White = "W"
+  show color = [Data.Maybe.fromJust . M.lookup color $ inverseColorChars]
 
 data ManaAbility = ManaAbility ManaPool deriving (Show)
 
@@ -108,12 +123,11 @@ manaExpr = do
   return (mconcat result)
 
 manaChar =
-      (char 'R' >> return [Just Red])
-  <|> (char 'U' >> return [Just Blue])
-  <|> (char 'B' >> return [Just Black])
-  <|> (char 'G' >> return [Just Green])
-  <|> (char 'W' >> return [Just White])
+      choice (map parseColor colorChars)
   <|> (many1 digit >>= (\n -> return $ replicate (read n) Nothing))
+  where
+    parseColor (c, color) = (char c >> return [Just color])
+
 mkCost input = case parseManaString input of
                  Right colors -> map toRestriction colors
                  Left err -> error (show err)
