@@ -157,6 +157,23 @@ cast name = do
     stack
     (\s -> (name, True) : s)
 
+castFromLocation name loc = do
+  card <- requireCard name (requireLocation loc)
+
+  assign
+    (cards . at name . _Just . location)
+    (Active, Playing)
+
+  when
+    (hasAttribute "sorcery" card || hasAttribute "instant" card) $
+    modifying
+      (counters . at "storm" . non 0)
+      (+ 1)
+
+  modifying
+    stack
+    (\s -> (name, True) : s)
+
 jumpstart discard name = do
   -- TODO: Discard
   card <- requireCard name (requireLocation (Active, Graveyard))
@@ -188,20 +205,28 @@ resolve expectedName = do
 
         assign stack ss
 
-        if hasAttribute "creature" c then
+        when (hasAttribute "creature" c) $
           modifying
             (cards . at name . _Just)
-            (setAttribute "summoned" . set location (Active, Play))
-        else
-          if cast then
+            (setAttribute "summoned")
+
+        if (hasAttribute "sorcery" c || hasAttribute "instant" c) then
+          when cast $
             assign
               (cards . at name . _Just . location)
               (Active, Graveyard)
-          else
-            return ()
+        else
+          modifying
+            (cards . at name . _Just)
+            (set location (Active, Play))
 
 target targetName = do
   card <- requireCard targetName (inPlay <> missingAttribute "hexproof")
+
+  return ()
+
+targetInLocation targetName zone = do
+  card <- requireCard targetName (requireLocation zone)
 
   return ()
 
@@ -263,15 +288,41 @@ storm action = do
 
   return ()
 
+resetStrength :: CardName -> (Int, Int) -> GameMonad ()
+resetStrength cn desired = do
+  c <- requireCard cn (requireAttribute "creature")
+
+  let c' = set cardStrength desired c
+
+  assign
+    (cards . at cn . _Just)
+    c'
+
+moveToGraveyard cn = do
+  c <- requireCard cn mempty
+
+  let c' = over location (\(player, _) -> (player, Graveyard)) c
+
+  assign
+    (cards . at cn . _Just)
+    c'
+
 modifyStrength :: CardName -> (Int, Int) -> GameMonad ()
 modifyStrength cn (x, y) = do
   c <- requireCard cn (inPlay <> requireAttribute "creature")
 
   let c' = over cardStrength (\(a, b) -> (a + x, b + y)) c
 
+  -- TODO: Handle tokens
+  let c'' =
+        if view (cardStrength . _2) c' <= 0 then
+          over location (\(player, _) -> (player, Graveyard)) c'
+        else
+          c'
+
   assign
     (cards . at cn . _Just)
-    c'
+    c''
 
 attackWith :: [CardName] -> GameMonad ()
 attackWith cs = do
@@ -435,9 +486,19 @@ step desc m = do
     Left x -> throwError x
     Right _ -> return ()
 
+gainLife player amount =
+  modifying
+    (life . at player . non 0)
+    (\x -> x + amount)
+
+loseLife player amount =
+  modifying
+    (life . at player . non 0)
+    (\x -> x - amount)
+
 main :: IO ()
 main = do
-  let (e, _, log) = runMonad emptyBoard guilds_of_ravnica_7
+  let (e, _, log) = runMonad emptyBoard guilds_of_ravnica_8
 
   forM_ (zip log [1..]) $ \((step, board), n) -> do
     putStr $ (show n) <> ". "
@@ -451,9 +512,134 @@ main = do
     Left x -> fail x
     Right _ -> return ()
 
+returnToHand cn =
+  assign
+    (cards . at cn . _Just . location)
+    (Active, Hand)
+
+returnToPlay cn =
+  assign
+    (cards . at cn . _Just . location)
+    (Active, Play)
+
 -- http://www.possibilitystorm.com/089-guilds-of-ravnica-season-puzzle-7-2/
-guilds_of_ravnica_7 :: GameMonad ()
-guilds_of_ravnica_7 = do
+guilds_of_ravnica_8 = do
+  setLife Opponent 7
+
+  addCreature "Epicure of Blood" (4, 4) (Active, Play) []
+  addCreature "Muldrotha, the Gravetide" (6, 6) (Active, Play) []
+  addCreature "Diamond Mare" (1, 3) (Active, Graveyard) ["artifact"]
+  addCard "Detection Tower" (Active, Graveyard) ["land"]
+  addCard "Mox Amber" (Active, Graveyard) ["artifact"]
+
+  addCards 3 "Memorial to Folly" (Active, Play) ["land"]
+  addCards 4 "Watery Grave" (Active, Play) ["land"]
+  addCards 4 "Overgrown Tomb" (Active, Play) ["land"]
+
+  addCard "March of the Drowned" (Active, Hand) ["sorcery", "black"]
+  addCard "Gruesome Menagerie" (Active, Hand) ["sorcery", "black"]
+  addCard "Dead Weight" (Active, Hand) ["aura", "black"]
+  addCard "Find" (Active, Hand) ["sorcery", "black"]
+  addCreature "Vicious Conquistador" (1, 2) (Active, Graveyard) ["black"]
+  addCreature "Sailor of Means" (1, 4) (Active, Graveyard) []
+
+  -- This solutions relies on triggering Diamond Mare to gain life, which in
+  -- turns triggers Epicure of Blood to cause the opponent to lose life. This
+  -- helper can wrap cast actions with that combination.
+  let withTriggers = \action name -> do
+        action name
+        trigger "Diamond Mare"
+        c <- requireCard name mempty
+
+        when (hasAttribute "black" c) $ do
+          gainLife Active 1
+          trigger "Epicure of Blood"
+          loseLife Opponent 1
+    
+
+  -- Helper function to keep track of which permanent types have been cast
+  -- using Muldrotha's ability.
+  let castWithMuldrotha = \ptype cn -> do
+        let ptypes = S.fromList ["artifact", "creature", "land", "enchantment"]
+        let counterName = "muldrotha-" <> ptype
+
+        when (not $ S.member ptype ptypes) $
+          throwError $ "Invalid permanent type: " <> ptype
+
+        n <- use (counters . at counterName . non 0)
+
+        if n > 0 then
+          throwError $ "Already cast card of type with Muldrotha: " <> ptype
+        else
+          do
+            castFromLocation cn (Active, Graveyard)
+            resolve cn
+            assign (counters . at counterName) (Just 1)
+
+  step "Detection Tower, Mox Amber, Diamond Mare from graveyard" $ do
+    castWithMuldrotha "land" "Detection Tower"
+    castWithMuldrotha "artifact" "Mox Amber"
+    tap "Detection Tower"
+    tap "Mox Amber"
+    castWithMuldrotha "creature" "Diamond Mare"
+
+  step "March of the Drowned on Vicious Conquistador" $ do
+    tap "Memorial to Folly 1"
+    withTriggers cast "March of the Drowned"
+    resolve "March of the Drowned"
+    returnToHand "Vicious Conquistador"
+
+  step "Vicious Conquistador" $ do
+    tap "Memorial to Folly 2"
+    withTriggers cast "Vicious Conquistador"
+    resolve "Vicious Conquistador"
+
+  step "Dead Weight on Vicious Conquistador" $ do
+    tap "Memorial to Folly 3"
+    withTriggers cast "Dead Weight"
+    target "Vicious Conquistador"
+    resolve "Dead Weight"
+    modifyStrength "Vicious Conquistador" (-2, -2)
+    resetStrength "Vicious Conquistador" (1, 2)
+    moveToGraveyard "Dead Weight"
+
+  step "Gruesome Menagerie for Sailor of Means and Vicious Conquistador" $ do
+    tap "Watery Grave 1"
+    tap "Watery Grave 2"
+    tap "Watery Grave 3"
+    tap "Watery Grave 4"
+    tap "Overgrown Tomb 1"
+    withTriggers cast "Gruesome Menagerie"
+    resolve "Gruesome Menagerie"
+    targetInLocation "Vicious Conquistador" (Active, Graveyard)
+    targetInLocation "Sailor of Means" (Active, Graveyard)
+    returnToPlay "Vicious Conquistador"
+    returnToPlay "Sailor of Means"
+    addCard "Treasure" (Active, Play) ["artifact"]
+    
+  step "Dead Weight on Vicious Conquistador" $ do
+    tap "Overgrown Tomb 2"
+    withTriggers (castWithMuldrotha "enchantment") "Dead Weight"
+    target "Vicious Conquistador"
+    modifyStrength "Vicious Conquistador" (-2, -2)
+    resetStrength "Vicious Conquistador" (1, 2)
+    moveToGraveyard "Dead Weight"
+
+  step "Find for Vicous Conquistador" $ do
+    tap "Overgrown Tomb 3"
+    tap "Overgrown Tomb 4"
+    withTriggers cast "Find"
+    resolve "Find"
+    targetInLocation "Vicious Conquistador" (Active, Graveyard)
+    returnToHand "Vicious Conquistador"
+
+  step "Vicious Conquistador" $ do
+    tap "Treasure"
+    withTriggers cast "Vicious Conquistador"
+    resolve "Vicious Conquistador"
+
+    
+guilds_of_ravnica_9 = do
   setLife Opponent 12
 
   -- Hand
