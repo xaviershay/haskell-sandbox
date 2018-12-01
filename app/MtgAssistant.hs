@@ -1,5 +1,6 @@
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE FlexibleContexts #-}
 
 module Main where
 
@@ -14,6 +15,7 @@ import           Control.Monad.State hiding (state)
 import Control.Arrow ((&&&))
 import Data.List
 import Data.Function
+import Debug.Trace
 
 type CardName = String
 type CardAttribute = String
@@ -30,6 +32,8 @@ data Card = Card
   { _cardName :: CardName
   , _location :: (Player, Location)
   , _cardAttributes :: S.Set CardAttribute
+  , _cardStrength :: (Int, Int)
+  , _cardDamage :: Int
   } deriving (Show)
 
 data Board = Board
@@ -43,13 +47,18 @@ type GameMonad a = (ExceptT String (StateT Board Identity)) a
 makeLenses ''Board
 makeLenses ''Card
 
+setAttribute :: CardAttribute -> Card -> Card
 setAttribute attr = over cardAttributes (S.insert attr)
+
+hasAttribute attr = S.member attr . view cardAttributes
 
 mkCard name location =
   Card
     { _cardName = name
     , _location = location
     , _cardAttributes = mempty
+    , _cardStrength = (0, 0)
+    , _cardDamage = 0
     }
 
 requireCard :: CardName -> CardMatcher -> GameMonad Card
@@ -62,7 +71,7 @@ requireCard name f = do
                    return card
                  else
                    throwError $ "Card does not match requirements: " <> name
-  
+
 data CardMatcher = CardMatcher (Card -> Bool)
 
 requireLocation :: CardLocation -> CardMatcher
@@ -132,7 +141,7 @@ resolve expectedName = do
             (Active, Graveyard)
         else
           return ()
-          
+
 target targetName = do
   card <- requireCard targetName (inPlay <> missingAttribute "hexproof")
 
@@ -150,7 +159,7 @@ destroy targetName = do
 
   case S.member "token" (view cardAttributes card) of
     True -> modifying cards (M.delete targetName)
-    False -> 
+    False ->
           modifying
             (cards . at targetName . _Just . location)
             (\(x, _) -> (x, Graveyard))
@@ -163,7 +172,7 @@ copy targetName = do
   modifying
     stack
     (\s -> (targetName, False) : s)
-  
+
 storm :: (Int -> GameMonad ()) -> GameMonad ()
 storm action = do
   maybeStorm <- use $ counters . at "storm"
@@ -173,6 +182,53 @@ storm action = do
     Just c -> forM [1..c-1] $ \n -> action n
 
   return ()
+
+modifyStrength :: CardName -> (Int, Int) -> GameMonad ()
+modifyStrength cn (x, y) = do
+  c <- requireCard cn (inPlay <> requireAttribute "creature")
+
+  let c' = over cardStrength (\(a, b) -> (a + x, b + y)) c
+
+  assign
+    (cards . at cn . _Just)
+    c'
+
+
+fight :: CardName -> CardName -> GameMonad ()
+fight x y = do
+  _ <- requireCard x inPlay
+  _ <- requireCard y inPlay
+
+  fight' x y
+  fight' y x
+
+  where
+    fight' x y = do
+      cx <- requireCard x (requireAttribute "creature")
+      cy <- requireCard y (requireAttribute "creature")
+
+      let xdmg = max 0 $ view (cardStrength . _1) cx
+      let cy' = over cardDamage (+ xdmg) cy
+
+      assign
+        (cards . at y . _Just)
+        cy'
+
+      if view cardDamage cy' >= view (cardStrength . _2) cy' || (xdmg > 0 && hasAttribute "deathtouch" cx ) then
+        destroy y
+      else
+        return ()
+
+forCards :: CardMatcher -> (Card -> Card) -> GameMonad ()
+forCards matcher f = do
+  cs <- use cards
+
+  let matchingCs = filter (applyMatcher matcher) (M.elems cs)
+
+  forM_ matchingCs $ \c ->
+    assign
+      (cards . at (view cardName c) . _Just)
+      (f c)
 
 runMonad :: Board -> GameMonad () -> (Either String (), Board)
 runMonad state m =
@@ -189,42 +245,82 @@ printBoard board = do
 
   forM_ sections $ \(loc, cs) -> do
     putStrLn . show $ loc
-    forM_ cs $ \c -> do
-      putStrLn $ "  " <> view cardName c <> " (" <> (intercalate "," . sort . S.toList $ view cardAttributes c) <> ")"
+    forM_ (sortBy (compare `on` view cardName) cs) $ \c -> do
+      putStrLn $ "  " <> view cardName c <>
+        " (" <> (intercalate "," . sort . S.toList $ view cardAttributes c) <> ")"
+        <> if hasAttribute "creature" c then
+             " (" <> (show $ view (cardStrength . _1) c) <> "/" <> (show $ view (cardStrength . _2) c) <> ", " <> (show $ view cardDamage c) <> ")"
+           else
+            ""
 
   when (not . null $ view stack board) $ do
     putStrLn "Stack"
     forM_ (view stack board) $ \(cn, copy) -> do
       putStrLn $ "  " <> cn <> (if copy then " (copy)" else "")
 
+--addCard :: MonadState m a => CardName -> CardLocation -> [CardAttribute] -> m
+addCardFull name strength loc attrs = do
+  let c = set cardStrength strength $ set cardAttributes (S.fromList attrs) $ mkCard name loc
+
+  modifying cards (M.insert name c)
+
+addCard name loc attrs = do
+  addCardFull name (0, 0) loc attrs
+
+addCreature name strength loc attrs =
+  addCardFull name strength loc ("creature":attrs)
+
+addCards 0 name loc attrs = return ()
+addCards n name loc attrs = do
+  addCard (name <> " " <> show n) loc attrs
+  addCards (n - 1) name loc attrs
+
+buildBoard m = execState m $ Board
+                 { _cards = mempty
+                 , _counters = mempty
+                 , _stack = mempty
+                 }
+
+initialBoardState = buildBoard $ do
+  -- Hand
+  addCard "Undercity Uprising" (Active, Hand) []
+
+  -- Play
+  addCard "Thousand-Year Storm" (Active, Play) []
+  addCreature "Adeliz, the Cinder Wind" (4, 4) (Active, Play) ["legendary", "flying"]
+  addCreature "Afzocan Archer" (1, 4) (Active, Play) []
+  addCards 4 "Timber Gorge" (Active, Play) []
+  addCards 4 "Submerged Boneyard" (Active, Play) []
+  addCards 4 "Highland Lake" (Active, Play) []
+
+  -- Opponent
+  addCreature "Shalai, Voice of Plenty" (3, 4) (Opponent, Play) ["flying", "legendary"]
+
 main :: IO ()
 main = do
-  let cards =
-              [ setAttribute "token" $ mkCard "Angel Token 1" (Opponent, Play)
-              , setAttribute "token" $ mkCard "Angel Token 2" (Opponent, Play)
-              , setAttribute "token" $ mkCard "Angel Token 3" (Opponent, Play)
-              , mkCard "Thousand-Year Storm" (Active, Play)
-              , mkCard "Plummet" (Active, Hand)
-              , mkCard "Timber Gorge 1" (Active, Play)
-              ]
-
-  let board = Board
-                { _cards = M.fromList (map (\x -> (view cardName x, x)) cards)
-                , _counters = mempty
-                , _stack = mempty
-                }
+  let board = initialBoardState
 
   let (e, newBoard) =
                       runMonad board $ do
                          tap "Timber Gorge 1"
-                         cast "Plummet"
+                         tap "Submerged Boneyard 1"
+                         tap "Submerged Boneyard 2"
+                         cast "Undercity Uprising"
                          trigger "Thousand-Year Storm"
-                         storm $ const (copy "Plummet")
+                         storm $ const (copy "Undercity Uprising")
 
-                         resolve "Plummet"
-                         target "Angel Token 1"
-                         destroy "Angel Token 1"
+                         trigger "Adeliz, the Cinder Wind"
+                         modifyStrength "Adeliz, the Cinder Wind" (1, 1)
+
+                         resolve "Undercity Uprising"
+                         forCards
+                           (requireAttribute "creature" <> requireLocation (Active, Play))
+                           (setAttribute "deathtouch")
+                         target "Adeliz, the Cinder Wind"
+                         target "Shalai, Voice of Plenty"
+                         fight "Adeliz, the Cinder Wind" "Shalai, Voice of Plenty"
 
   putStrLn . show $ e
   putStrLn ""
+
   printBoard newBoard
