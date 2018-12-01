@@ -30,6 +30,15 @@ data CardState = Tapped | Untapped deriving (Show)
 
 instance Hashable Player
 
+data Effect = Effect (Card -> Card) (Card -> Card)
+
+instance Show Effect where
+  show _ = "<effect>"
+
+instance Monoid Effect where
+  mempty = Effect id id
+  mappend (Effect f1 g1) (Effect f2 g2) = Effect (f1 . f2) (g1 . g2)
+
 data Card = Card
   { _cardName :: CardName
   , _location :: (Player, Location)
@@ -38,17 +47,24 @@ data Card = Card
   , _cardDamage :: Int
   } deriving (Show)
 
+data CardMatcher = CardMatcher (Card -> Bool)
+
+instance Show CardMatcher where
+  show _ = "<matcher>"
+
 data Board = Board
   { _cards :: M.HashMap CardName Card
   , _stack :: [Spell]
   , _counters :: M.HashMap String Int
   , _life :: M.HashMap Player Int
+  , _effects :: M.HashMap String (CardMatcher, Effect)
   } deriving (Show)
 
 type GameMonad a = (ExceptT String (StateT Board Identity)) a
 
 makeLenses ''Board
 makeLenses ''Card
+
 
 setAttribute :: CardAttribute -> Card -> Card
 setAttribute attr = over cardAttributes (S.insert attr)
@@ -78,8 +94,11 @@ requireCard name f = do
                  else
                    throwError $ "Card does not match requirements: " <> name
 
-data CardMatcher = CardMatcher (Card -> Bool)
 
+attributeEffect attr = Effect (setAttribute attr) (removeAttribute attr)
+strengthEffect (x, y) = Effect
+  (over cardStrength (\(a, b) -> (a + x, b + y)))
+  (over cardStrength (\(a, b) -> (a - x, b - y)))
 requireLocation :: CardLocation -> CardMatcher
 requireLocation loc = CardMatcher $ (==) loc . view location
 
@@ -92,6 +111,10 @@ requireAttribute attr = CardMatcher $ S.member attr . view cardAttributes
 
 requireName :: CardName -> CardMatcher
 requireName n = CardMatcher $ (==) n . view cardName
+
+requireOther = invert . requireName
+
+requireController player = CardMatcher $ (==) player . view (location . _1)
 
 missingAttribute = invert . requireAttribute
 
@@ -133,7 +156,7 @@ cast name = do
     stack
     (\s -> (name, True) : s)
 
-jumpstart name discard = do
+jumpstart discard name = do
   -- TODO: Discard
   card <- requireCard name (requireLocation (Active, Graveyard))
 
@@ -187,6 +210,12 @@ trigger targetName = do
   card <- requireCard targetName inPlay
 
   return ()
+
+validateRemoved targetName = do
+  board <- get
+  case view (cards . at targetName) board of
+    Nothing -> return ()
+    Just _ -> throwError $ "Card should be removed: " <> targetName
 
 validate targetName reqs = do
   _ <- requireCard targetName reqs
@@ -260,6 +289,9 @@ fight :: CardName -> CardName -> GameMonad ()
 fight x y = do
   _ <- requireCard x inPlay
   _ <- requireCard y inPlay
+
+  target x
+  target y
 
   fight' x y
   fight' y x
@@ -365,9 +397,15 @@ buildBoard m = execState m $ Board
                  , _counters = mempty
                  , _stack = mempty
                  , _life = mempty
+                 , _effects = mempty
                  }
 
+addEffect cn f effect = do
+  modifying effects (M.insert cn (f, effect))
+
 initialBoardState = buildBoard $ do
+  setLife Opponent 12
+
   -- Hand
   addCard "Undercity Uprising" (Active, Hand) ["sorcery"]
   addCard "Doublecast" (Active, Hand) ["sorcery"]
@@ -376,64 +414,86 @@ initialBoardState = buildBoard $ do
   addCreature "Torgaar, Famine Incarnate" (7, 6) (Active, Hand) ["creature"]
 
   -- Play
-  addCard "Thousand-Year Storm" (Active, Play) []
+  addCard "Thousand-Year Storm" (Active, Play) ["enchantment"]
+  -- Has +2/+2 from Maniacal Rage aura
   addCreature "Adeliz, the Cinder Wind" (4, 4) (Active, Play) ["flying"]
   addCreature "Afzocan Archer" (1, 4) (Active, Play) []
-  addCards 4 "Timber Gorge" (Active, Play) []
-  addCards 4 "Submerged Boneyard" (Active, Play) []
-  addCards 4 "Highland Lake" (Active, Play) []
+  addCards 4 "Timber Gorge" (Active, Play) ["land"]
+  addCards 4 "Submerged Boneyard" (Active, Play) ["land"]
+  addCards 4 "Highland Lake" (Active, Play) ["land"]
 
   -- Opponent
   addCreature "Kopala, Warden of Waves" (2, 2) (Opponent, Play) ["merfolk"]
-  addCreature "Merfolk Mistbinder 1" (2, 2) (Opponent, Play) ["merfolk"]
-  addCreature "Merfolk Mistbinder 2" (3, 3) (Opponent, Play) ["merfolk"]
-  addCreature "Shalai, Voice of Plenty" (3, 4) (Opponent, Play) ["angel", "flying"]
-  addCreature "Lyra Dawnbringer" (5, 5) (Opponent, Play) ["angel", "flying", "lifelink"]
   addCreature "Angel 1" (4, 4) (Opponent, Play) ["angel", "flying", "token"]
   addCreature "Angel 2" (4, 4) (Opponent, Play) ["angel", "flying", "token"]
   addCreature "Angel 3" (4, 4) (Opponent, Play) ["angel", "flying", "token"]
 
-  setLife Opponent 12
+  let cn = "Shalai, Voice of Plenty" in
+    do
+      addCreature cn (3, 4) (Opponent, Play) ["angel", "flying"]
+      addEffect cn
+        (requireOther cn
+          <> requireLocation (Opponent, Play)
+          <> requireAttribute "creature")
+        (attributeEffect "hexproof")
 
-  -- Get current board
+  let cn = "Lyra Dawnbringer" in
+    do
+      addCreature cn (5, 5) (Opponent, Play) ["angel", "flying", "lifelink"]
+      addEffect cn
+        (requireOther cn
+          <> requireLocation (Opponent, Play)
+          <> requireAttribute "angel")
+        (attributeEffect "lifelink" <> strengthEffect (1, 1))
+
+  let cn = numbered 1 "Merfolk Mistbinder" in
+    do
+      addCreature cn (2, 2) (Opponent, Play) ["merfolk"]
+      addEffect cn
+        (requireOther cn
+          <> requireLocation (Opponent, Play)
+          <> requireAttribute "merfolk")
+        (strengthEffect (1, 1))
+
+  let cn = numbered 2 "Merfolk Mistbinder" in
+    do
+      -- Has a +1/+1 counter
+      addCreature cn (3, 3) (Opponent, Play) ["merfolk"]
+      addEffect cn
+        (requireOther cn
+          <> requireLocation (Opponent, Play)
+          <> requireAttribute "merfolk")
+        (strengthEffect (1, 1))
+
+with x f = f x
+
+requireEffect effectName = do
+  board <- get
+  case view (effects . at effectName) board of
+    Nothing -> throwError $ "No effect named: " <> effectName
+    Just x -> return x
+
+applyEffect effectName = do
+  (matcher, Effect forward _) <- requireEffect effectName
+
+  forCards matcher forward
+
+removeEffect effectName = do
+  (matcher, Effect _ undo) <- requireEffect effectName
+
+  forCards matcher undo
+
 main :: IO ()
 main = do
-  let (_, board) = runMonad initialBoardState $ do
-                     -- Apply Shalai's hexproof effect
-                     forCards
-                       (requireAttribute "creature"
-                          <> requireLocation (Opponent, Play)
-                          <> (invert $ requireName "Shalai, Voice of Plenty"))
-                       (setAttribute "hexproof")
+  let (e, board) = runMonad initialBoardState $ do
+                     applyEffect "Shalai, Voice of Plenty"
+                     applyEffect "Lyra Dawnbringer"
+                     applyEffect "Merfolk Mistbinder 1"
+                     applyEffect "Merfolk Mistbinder 2"
 
-                     -- Apply Lyra's +1/+1 and lifelink
-                     forCards
-                       (requireAttribute "creature"
-                          <> requireLocation (Opponent, Play)
-                          <> requireAttribute "angel"
-                          <> (invert $ requireName "Lyra Dawnbringer"))
-                       (setAttribute "lifelink" . over cardStrength (\(a, b) -> (a + 1, b + 1)))
-
-                     -- Apply Mistbinder's +1/+1
-                     forCards
-                       (requireAttribute "creature"
-                          <> requireLocation (Opponent, Play)
-                          <> requireAttribute "merfolk"
-                          <> (invert $ requireName "Merfolk Mistbinder 1"))
-                       (over cardStrength (\(a, b) -> (a + 1, b + 1)))
-
-                     forCards
-                       (requireAttribute "creature"
-                          <> requireLocation (Opponent, Play)
-                          <> requireAttribute "merfolk"
-                          <> (invert $ requireName "Merfolk Mistbinder 2"))
-                       (over cardStrength (\(a, b) -> (a + 1, b + 1)))
-
-
-  --putStrLn . show $ e
-  --putStrLn ""
-
-  --printBoard newBoard3
+  case e of
+    Left x -> fail x
+    Right _ -> return ()
 
   b <- newIORef (1, board)
   let step = \desc m -> do
@@ -445,134 +505,109 @@ main = do
 
                 case e of
                   Left e -> do
-                    putStrLn e
-                    return () -- TODO: Exit
+                    fail e
                   Right _ -> do
                     printBoard board'
                     putStrLn ""
                     putStrLn ""
                     writeIORef b (n+1, board')
 
+  -- This puzzle relies heavily on casting triggers, so wrap the relevant ones
+  -- up in this helper.
+  let withTriggers = \action name -> do
+        action name
+        trigger "Thousand-Year Storm"
+        storm $ const (copy name)
+
+        trigger "Adeliz, the Cinder Wind"
+        modifyStrength "Adeliz, the Cinder Wind" (1, 1)
+    
   step "Use Undercity Uprising on Adeliz to destroy Shalai" $ do
     tap $ numbered 1 "Timber Gorge"
     tap $ numbered 1 "Submerged Boneyard"
     tap $ numbered 2 "Submerged Boneyard"
-    cast "Undercity Uprising"
-    trigger "Thousand-Year Storm"
-    storm $ const (copy "Undercity Uprising")
 
-    trigger "Adeliz, the Cinder Wind"
-    modifyStrength "Adeliz, the Cinder Wind" (1, 1)
-
+    withTriggers cast "Undercity Uprising"
     resolve "Undercity Uprising"
     forCards
       (requireAttribute "creature" <> requireLocation (Active, Play))
       (setAttribute "deathtouch")
-    target "Adeliz, the Cinder Wind"
-    target "Shalai, Voice of Plenty"
-    fight "Adeliz, the Cinder Wind" "Shalai, Voice of Plenty"
-    validate "Shalai, Voice of Plenty" $ requireLocation (Opponent, Graveyard)
 
-    forCards
-      (requireAttribute "creature" <> requireLocation (Opponent, Play))
-      (removeAttribute "hexproof")
+    with "Shalai, Voice of Plenty" $ \enemy -> do
+      fight "Adeliz, the Cinder Wind" enemy
+      validate enemy $ requireLocation (Opponent, Graveyard)
+      removeEffect enemy
 
   step "Cast Doublecast" $ do
     tap $ numbered 2 "Timber Gorge"
     tap $ numbered 3 "Timber Gorge"
-    cast "Doublecast"
-    trigger "Thousand-Year Storm"
-    storm $ const (copy "Doublecast")
-
-    trigger "Adeliz, the Cinder Wind"
-    modifyStrength "Adeliz, the Cinder Wind" (1, 1)
+    withTriggers cast "Doublecast"
 
     resolve "Doublecast"
     resolve "Doublecast"
 
   step "Cast Plummet to destroy all fliers" $ do
     tap "Timber Gorge 4"
-    cast "Plummet"
-    trigger "Thousand-Year Storm"
-    storm $ const (copy "Plummet")
-
-    trigger "Adeliz, the Cinder Wind"
-    modifyStrength "Adeliz, the Cinder Wind" (1, 1)
+    withTriggers cast "Plummet"
 
     -- From double doublecast earlier
     copy "Plummet"
     copy "Plummet"
 
     resolve "Plummet"
-    target "Lyra Dawnbringer"
-    destroy "Lyra Dawnbringer"
-    validate "Lyra Dawnbringer" $ requireLocation (Opponent, Graveyard)
-    forCards
-      (requireAttribute "creature"
-         <> requireLocation (Opponent, Play)
-         <> requireAttribute "angel"
-         <> (invert $ requireName "Lyra Dawnbringer"))
-      (removeAttribute "lifelink" . over cardStrength (\(a, b) -> (a - 1, b - 1)))
+    with "Lyra Dawnbringer" $ \enemy -> do
+      target enemy
+      destroy enemy
+      validate enemy $ requireLocation (Opponent, Graveyard)
+      removeEffect enemy
 
     forM_ [1..3] $ \n -> do
       resolve "Plummet"
-      target $ numbered n "Angel"
-      destroy $ numbered n "Angel"
+      with (numbered n "Angel") $ \enemy -> do
+        target enemy
+        destroy enemy
+        validateRemoved enemy
 
     resolve "Plummet" -- No target
 
   step "Quasiduplicate on archer, destroy one of the Mistbinders" $ do
     tap $ numbered 1 "Highland Lake"
     tap $ numbered 2 "Highland Lake"
-    cast "Quasiduplicate"
-    storm $ const (copy "Quasiduplicate")
-    trigger "Adeliz, the Cinder Wind"
-    modifyStrength "Adeliz, the Cinder Wind" (1, 1)
+    withTriggers cast "Quasiduplicate"
 
-    forM_ [1..4] $ \n -> do
-      let tokenName = ("Afzocan Archer " <> show n)
-      resolve "Quasiduplicate"
-      createToken tokenName (1, 4) (Active, Play)
-      fight tokenName $ numbered 2 "Merfolk Mistbinder"
+    with (numbered 2 "Merfolk Mistbinder") $ \enemy -> do
+      forM_ [1..4] $ \n -> do
+        let tokenName = ("Afzocan Archer " <> show n)
+        resolve "Quasiduplicate"
+        createToken tokenName (1, 4) (Active, Play)
+        fight tokenName enemy
 
-    validate (numbered 2 "Merfolk Mistbinder") $
-      requireLocation (Opponent, Graveyard)
-    forCards
-      (requireAttribute "creature"
-         <> requireLocation (Opponent, Play)
-         <> requireAttribute "merfolk"
-         <> (invert . requireName $ numbered 2 "Merfolk Mistbinder"))
-      (over cardStrength (\(a, b) -> (a - 1, b - 1)))
+      validate enemy $ requireLocation (Opponent, Graveyard)
+      removeEffect enemy
 
   step "Jump-start Quasiduplicate again (w/ Waterknot), destroy merfolk" $ do
     tap $ numbered 3 "Highland Lake"
     tap $ numbered 4 "Highland Lake"
-    jumpstart "Quasiduplicate" "Waterknot"
-    storm $ const (copy "Quasiduplicate")
-    trigger "Adeliz, the Cinder Wind"
-    modifyStrength "Adeliz, the Cinder Wind" (1, 1)
+    withTriggers (jumpstart "Waterknot") "Quasiduplicate"
 
-    forM_ [1..2] $ \n -> do
-      let tokenName = ("Afzocan Archer " <> show n)
-      resolve "Quasiduplicate"
-      createToken tokenName (1, 4) (Active, Play)
-      fight tokenName "Merfolk Mistbinder 1"
+    with (numbered 1 "Merfolk Mistbinder") $ \enemy -> do
+      forM_ [1..2] $ \n -> do
+        let tokenName = ("Afzocan Archer " <> show n)
+        resolve "Quasiduplicate"
+        createToken tokenName (1, 4) (Active, Play)
+        fight tokenName enemy
 
-    validate (numbered 1 "Merfolk Mistbinder") $
-      requireLocation (Opponent, Graveyard)
+      validate enemy $ requireLocation (Opponent, Graveyard)
+      removeEffect enemy
 
-    forCards
-      (requireAttribute "creature"
-         <> requireLocation (Opponent, Play)
-         <> requireAttribute "merfolk"
-         <> (invert $ requireName $ numbered 1 "Merfolk Mistbinder"))
-      (over cardStrength (\(a, b) -> (a - 1, b - 1)))
+    with "Kopala, Warden of Waves" $ \enemy -> do
+      forM_ [3..4] $ \n -> do
+        let tokenName = numbered n "Afzocan Archer"
+        resolve "Quasiduplicate"
+        createToken tokenName (1, 4) (Active, Play)
+        fight tokenName enemy
 
-    forM_ [3..4] $ \n -> do
-      let tokenName = numbered n "Afzocan Archer"
-      resolve "Quasiduplicate"
-      createToken tokenName (1, 4) (Active, Play)
-      fight tokenName "Kopala, Warden of Waves"
+      validate enemy $ requireLocation (Opponent, Graveyard)
 
     forM_ [5] $ \n -> do
       let tokenName = numbered n "Afzocan Archer"
