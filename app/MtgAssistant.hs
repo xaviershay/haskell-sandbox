@@ -12,6 +12,7 @@ import qualified Data.Set as S
 import Data.Hashable
 import GHC.Generics hiding (to)
 import           Control.Monad.Except
+import           Control.Monad.Writer
 import           Control.Monad.State hiding (state)
 import Control.Arrow ((&&&))
 import Data.List
@@ -60,7 +61,7 @@ data Board = Board
   , _effects :: M.HashMap String (CardMatcher, Effect)
   } deriving (Show)
 
-type GameMonad a = (ExceptT String (StateT Board Identity)) a
+type GameMonad a = (ExceptT String (StateT Board (WriterT [(String, Board)] Identity))) a
 
 makeLenses ''Board
 makeLenses ''Card
@@ -339,9 +340,12 @@ createToken name strength location = do
                 ) board
   put board'
 
-runMonad :: Board -> GameMonad () -> (Either String (), Board)
+runMonad :: Board -> GameMonad () -> (Either String (), Board, [(String, Board)])
 runMonad state m =
-  runIdentity $ runStateT (runExceptT m) state
+  let ((e, b), log) = runIdentity $
+                        runWriterT (runStateT (runExceptT m) state) in
+
+  (e, b, log)
 
 -- https://stackoverflow.com/questions/15412027/haskell-equivalent-to-scalas-groupby
 groupByWithKey :: (Ord b) => (a -> b) -> [a] -> [(b, [a])]
@@ -380,7 +384,6 @@ addCardFull name strength loc attrs = do
 addCard name loc attrs = do
   addCardFull name (0, 0) loc attrs
 
-addCreature :: CardName -> (Int, Int) -> CardLocation -> [CardAttribute] -> State Board ()
 addCreature name strength loc attrs =
   addCardFull name strength loc ("creature":attrs)
 
@@ -392,18 +395,65 @@ addCards n name loc attrs = do
 setLife p n =
   assign (life . at p) (Just n)
 
-buildBoard m = execState m $ Board
-                 { _cards = mempty
-                 , _counters = mempty
-                 , _stack = mempty
-                 , _life = mempty
-                 , _effects = mempty
-                 }
+emptyBoard = Board
+               { _cards = mempty
+               , _counters = mempty
+               , _stack = mempty
+               , _life = mempty
+               , _effects = mempty
+               }
 
 addEffect cn f effect = do
   modifying effects (M.insert cn (f, effect))
 
-initialBoardState = buildBoard $ do
+with x f = f x
+
+requireEffect effectName = do
+  board <- get
+  case view (effects . at effectName) board of
+    Nothing -> throwError $ "No effect named: " <> effectName
+    Just x -> return x
+
+applyEffect effectName = do
+  (matcher, Effect forward _) <- requireEffect effectName
+
+  forCards matcher forward
+
+removeEffect effectName = do
+  (matcher, Effect _ undo) <- requireEffect effectName
+
+  forCards matcher undo
+
+step desc m = do
+  b <- get
+  let (e, b', _) = runMonad b m
+
+  tell [(desc, b')]
+  put b'
+
+  case e of
+    Left x -> throwError x
+    Right _ -> return ()
+
+main :: IO ()
+main = do
+  let (e, _, log) = runMonad emptyBoard guilds_of_ravnica_7
+
+  forM_ (zip log [1..]) $ \((step, board), n) -> do
+    putStr $ (show n) <> ". "
+    putStrLn $ step
+    putStrLn ""
+    printBoard board
+    putStrLn ""
+    putStrLn ""
+
+  case e of
+    Left x -> fail x
+    Right _ -> return ()
+
+-- http://www.possibilitystorm.com/089-guilds-of-ravnica-season-puzzle-7-2/
+guilds_of_ravnica_7 :: GameMonad ()
+guilds_of_ravnica_7 = do
   setLife Opponent 12
 
   -- Hand
@@ -464,54 +514,10 @@ initialBoardState = buildBoard $ do
           <> requireLocation (Opponent, Play)
           <> requireAttribute "merfolk")
         (strengthEffect (1, 1))
-
-with x f = f x
-
-requireEffect effectName = do
-  board <- get
-  case view (effects . at effectName) board of
-    Nothing -> throwError $ "No effect named: " <> effectName
-    Just x -> return x
-
-applyEffect effectName = do
-  (matcher, Effect forward _) <- requireEffect effectName
-
-  forCards matcher forward
-
-removeEffect effectName = do
-  (matcher, Effect _ undo) <- requireEffect effectName
-
-  forCards matcher undo
-
-main :: IO ()
-main = do
-  let (e, board) = runMonad initialBoardState $ do
-                     applyEffect "Shalai, Voice of Plenty"
-                     applyEffect "Lyra Dawnbringer"
-                     applyEffect "Merfolk Mistbinder 1"
-                     applyEffect "Merfolk Mistbinder 2"
-
-  case e of
-    Left x -> fail x
-    Right _ -> return ()
-
-  b <- newIORef (1, board)
-  let step = \desc m -> do
-                (n, board) <- readIORef b
-
-                putStr $ show n <> ". "
-                putStrLn desc
-                let (e, board') = runMonad board m
-
-                case e of
-                  Left e -> do
-                    fail e
-                  Right _ -> do
-                    printBoard board'
-                    putStrLn ""
-                    putStrLn ""
-                    writeIORef b (n+1, board')
-
+  applyEffect "Shalai, Voice of Plenty"
+  applyEffect "Lyra Dawnbringer"
+  applyEffect "Merfolk Mistbinder 1"
+  applyEffect "Merfolk Mistbinder 2"
   -- This puzzle relies heavily on casting triggers, so wrap the relevant ones
   -- up in this helper.
   let withTriggers = \action name -> do
