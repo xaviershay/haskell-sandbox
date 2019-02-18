@@ -66,7 +66,6 @@ type GameMonad a = (ExceptT String (StateT Board (WriterT [(String, Board)] Iden
 makeLenses ''Board
 makeLenses ''Card
 
-
 setAttribute :: CardAttribute -> Card -> Card
 setAttribute attr = over cardAttributes (S.insert attr)
 
@@ -100,6 +99,7 @@ attributeEffect attr = Effect (setAttribute attr) (removeAttribute attr)
 strengthEffect (x, y) = Effect
   (over cardStrength (\(a, b) -> (a + x, b + y)))
   (over cardStrength (\(a, b) -> (a - x, b - y)))
+
 requireLocation :: CardLocation -> CardMatcher
 requireLocation loc = CardMatcher $ (==) loc . view location
 
@@ -398,12 +398,6 @@ runMonad state m =
 
   (e, b, log)
 
--- https://stackoverflow.com/questions/15412027/haskell-equivalent-to-scalas-groupby
-groupByWithKey :: (Ord b) => (a -> b) -> [a] -> [(b, [a])]
-groupByWithKey f = map (f . head &&& id)
-                   . groupBy ((==) `on` f)
-                   . sortBy (compare `on` f)
-
 printBoard board = do
   putStr "Opponent Life: "
   putStrLn . show $ view (life . at Opponent . non 0) board
@@ -426,6 +420,13 @@ printBoard board = do
     putStrLn "Stack"
     forM_ (view stack board) $ \(cn, cast) -> do
       putStrLn $ "  " <> cn <> (if cast then "" else " (copy)")
+
+  where
+    -- https://stackoverflow.com/questions/15412027/haskell-equivalent-to-scalas-groupby
+    groupByWithKey :: (Ord b) => (a -> b) -> [a] -> [(b, [a])]
+    groupByWithKey f = map (f . head &&& id)
+                       . groupBy ((==) `on` f)
+                       . sortBy (compare `on` f)
 
 addCardFull name strength loc attrs = do
   let c = set cardStrength strength $ set cardAttributes (S.fromList attrs) $ mkCard name loc
@@ -454,10 +455,10 @@ emptyBoard = Board
                , _effects = mempty
                }
 
+with x f = f x
 addEffect cn f effect = do
   modifying effects (M.insert cn (f, effect))
 
-with x f = f x
 
 requireEffect effectName = do
   board <- get
