@@ -19,10 +19,12 @@ data ResourcePool = ResourcePool {
 } deriving (Show)
 makeLenses ''ResourcePool
 
+instance Semigroup ResourcePool where
+  x <> ResourcePool { _influence = i, _power = p, _health = h } =
+    x & influence +~ i & power +~ p & health +~ h
+
 instance Monoid ResourcePool where
   mempty = ResourcePool { _influence = 0, _power = 0, _health = 0 }
-  mappend x ResourcePool { _influence = i, _power = p, _health = h } =
-    x & influence +~ i & power +~ p & health +~ h
 
 data Reward =
     GainResources ResourcePool
