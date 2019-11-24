@@ -43,12 +43,7 @@ data Group = AllValues (S.HashSet CellId) deriving (Show)
 type State = M.HashMap CellId Cell
 type Structure = M.HashMap GroupId Group
 
-
 allValues = [1..4]
-
-
--- TODO: implies types aren't right yet
-constraintValues xs = xs
 
 mkCell :: T.Text -> [T.Text] -> Cell
 mkCell name groupIds = Cell
@@ -120,7 +115,7 @@ applyF constraint state group =
       if constraint == cellConstraint cell then
         state
       else
-        constrain cid (S.difference (constraintValues . cellConstraint $ cell) (constraintValues constraint)) state
+        constrain cid (S.difference (cellConstraint cell) constraint) state
 
 hasNCellsMatchingConstraint n constraint state group =
   case group of
