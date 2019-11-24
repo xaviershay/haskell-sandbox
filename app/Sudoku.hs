@@ -3,20 +3,64 @@
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE DataKinds #-}
+{-# LANGUAGE ConstraintKinds #-}
+{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE FlexibleContexts #-}
 
 module Main where
 
 import qualified Data.HashSet as S
 import qualified Data.HashMap.Strict as M
 import Data.HashMap.Strict ((!))
-import Data.List (foldl')
+import Data.List (foldl', (\\))
 import Data.Foldable (toList)
 import qualified Data.Text as T
-import Control.Monad (forM_)
+import Control.Monad (forM_, when)
 import Data.Hashable
 import GHC.Generics
 import Debug.Trace
 import Data.Sort (sortOn)
+import Control.Monad.Freer (Eff, Members, run, runM)
+import Control.Monad.Freer.Error (Error, throwError, runError)
+import Control.Monad.Freer.State (State(..), get, gets, put, runState)
+import Control.Lens (view, makeLenses, _Just, at)
+import Control.Lens (ASetter, view, over, set)
+
+data Group = AllValues (S.HashSet CellId) deriving (Show)
+
+instance Semigroup Group where
+  -- See comment on SemiGroup Cell
+  a <> b = error "don't use this"
+
+instance Monoid Group where
+  mempty = AllValues mempty
+
+type Constraint = S.HashSet Int
+
+data Problem = Problem
+  { _problemCells :: M.HashMap CellId Cell
+  , _problemStructure :: Structure
+  }
+
+type Structure = M.HashMap GroupId Group
+
+-- =========
+-- Reimplementations of Control.Lens MTL helpers to work with freer-simple
+assign :: Members '[ State s ] effs => ASetter s s a b -> b -> Eff effs ()
+assign accessor value = get >>= put . set accessor value
+
+modifying :: Members '[ State s ] effs => ASetter s s a b -> (a -> b) -> Eff effs ()
+modifying accessor f = get >>= put . over accessor f
+-- =========
+
+type AppEff effs = Members '[ State Problem ] effs
+
+runApp :: Problem -> Eff '[ State Problem ] a -> Problem
+runApp state m =
+  let (val, problem) = run . runState state $ m in
+
+  problem
 
 newtype GroupId = GroupId T.Text deriving (Eq, Generic, Show)
 newtype CellId = CellId T.Text deriving (Eq, Generic, Show)
@@ -24,39 +68,41 @@ newtype CellId = CellId T.Text deriving (Eq, Generic, Show)
 instance Hashable CellId
 instance Hashable GroupId
 
-type Constraint = S.HashSet Int
-
 data Cell = Cell
-  { cellId :: CellId
-  , cellConstraint :: Constraint
-  , cellGroups :: S.HashSet GroupId
+  { _cellId :: CellId
+  , _cellConstraint :: Constraint
+  , _cellGroups :: S.HashSet GroupId
   } deriving (Show)
 
 instance Eq Cell where
-  Cell { cellId = a } == Cell { cellId = b } = a == b
+  Cell { _cellId = a } == Cell { _cellId = b } = a == b
 
 instance Hashable Cell where
-  hashWithSalt n (Cell {cellId = a}) = hashWithSalt n a
+  hashWithSalt n (Cell {_cellId = a}) = hashWithSalt n a
 
-data Group = AllValues (S.HashSet CellId) deriving (Show)
-
-type State = M.HashMap CellId Cell
-type Structure = M.HashMap GroupId Group
+makeLenses ''Cell
+makeLenses ''Problem
 
 allValues = [1..4]
 
 mkCell :: T.Text -> [T.Text] -> Cell
 mkCell name groupIds = Cell
-  { cellId = CellId name
-  , cellConstraint = S.fromList allValues
-  , cellGroups = S.fromList . map GroupId $ groupIds
+  { _cellId = CellId name
+  , _cellConstraint = S.fromList allValues
+  , _cellGroups = S.fromList . map GroupId $ groupIds
   }
 
+-- Monoid instance for this and Group are cheats - we're using it plus _Just in
+-- lenses to avoid handling error cases where either cell or group ID don't
+-- exist in the problem.
+instance Semigroup Cell where
+  a <> b = error "don't use this"
+
+instance Monoid Cell where
+  mempty = mkCell "" []
+
 state =
-  constrain (CellId "r2c1") (S.singleton 1) $
-  constrain (CellId "r2c2") (S.singleton 2) $
-  constrain (CellId "r1c4") (S.singleton 1) $
-  M.fromList . map (\x -> (cellId x, x)) $
+  M.fromList . map (\x -> (_cellId x, x)) $
   [ mkCell "r1c1" ["r1", "s1"]
   , mkCell "r1c2" ["r1", "s1"]
   , mkCell "r1c3" ["r1", "s2"]
@@ -74,57 +120,58 @@ structure = M.fromList
   , (GroupId "s2", AllValues $ S.fromList . map CellId $ ["r2c3", "r2c4", "r2c3", "r2c4"])
   ]
 
-formatCell (Cell { cellId = CellId cid, cellConstraint = constraint}) =
+buildSudoku :: Eff '[ State Problem ] m -> Problem
+buildSudoku m = runApp (Problem { _problemCells = state, _problemStructure = structure }) m
+
+-- This is gross, will learn more with new types of groups (e.g. sandwich)
+getCells (AllValues xs) = xs
+
+constrain :: AppEff effs => CellId -> Constraint -> Eff effs ()
+constrain cid value = do
+  existing <- getConstraint cid
+  
+  when (existing /= value) $ do
+    assign (problemCells . at cid . _Just . cellConstraint) value
+
+    groupIds <- gets . view $ problemCells . at cid . _Just . cellGroups
+
+    -- Rule: if N cells in a group are constrained to the same N values, then
+    -- no other cell in that group can contain those values.
+    --
+    -- Interesting that N=1 ("specify a number") is a specialization of a more
+    -- general rule! (N=2 covers "twins")
+    --
+    -- TODO: can probably generalize further to cover hidden twins as well.
+    forM_ groupIds $ \groupId -> do
+      -- TODO: provide structure as a separate read only effect
+      group <- gets . view $ problemStructure . at groupId . _Just
+      let cellIds = toList $ getCells group
+      cells <- mapM (\x -> gets . view $ problemCells . at x . _Just) cellIds
+
+      let matching = filter (\cell -> view cellConstraint cell == value) cells
+
+      when (length matching == (length . toList $ value)) $ do
+        forM_ (cells \\ matching) $ \cell -> do
+          constrain
+            (view cellId cell)
+            (S.difference (view cellConstraint cell) value)
+
+getConstraint :: AppEff effs => CellId -> Eff effs Constraint
+getConstraint cid =
+  gets $ view (problemCells . at cid . _Just . cellConstraint)
+
+given :: AppEff effs => T.Text -> Int -> Eff effs ()
+given cid value = do
+  constrain (CellId cid) (S.singleton value)
+
+formatCell (Cell { _cellId = CellId cid, _cellConstraint = constraint}) =
   cid <> " " <> (T.pack . show $ constraint)
 
-constrain :: CellId -> Constraint -> State -> State
-constrain cid constraint state =
-  let existing = state ! cid in
-
-  if cellConstraint existing == constraint then
-    state
-  else
-    let state' = M.adjust (\c -> c { cellConstraint = constraint }) cid state in
-    let newCell = state' ! cid in
-    let xs = cellConstraint newCell in
-    let n = length . S.toList $ xs in
-    let groups =
-                  map (\x -> structure ! x)
-                $ (S.toList $ cellGroups newCell) in
-    let x = groups :: [Group] in
-
-    let filtered = filter (hasNCellsMatchingConstraint n (cellConstraint newCell) state') (trace (show groups) groups) in
-
-    -- WANT: Groups where length of cells with same constraint == n
-    let state'' = foldl' (applyF $ cellConstraint newCell) state' (trace (show filtered) filtered) in
-
-    state''
-
--- Every cell that doesn't match constraint, subtract constraint from
-applyF :: Constraint -> State -> Group -> State
-applyF constraint state group =
-  case group of
-    AllValues cs ->
-      foldl' applyG state (S.toList cs)
-
-  where
-    applyG :: State -> CellId -> State
-    applyG state cid =
-      let cell = state ! cid in
-
-      if constraint == cellConstraint cell then
-        state
-      else
-        constrain cid (S.difference (cellConstraint cell) constraint) state
-
-hasNCellsMatchingConstraint n constraint state group =
-  case group of
-    AllValues cs ->
-      let cellsInGroup = S.toList $ S.map (\c -> state ! c) cs in
-      let filtered = filter (\c -> trace (show $ (c, constraint)) (cellConstraint c == constraint)) cellsInGroup in
-
-      length filtered == n
-
-main =
-  forM_ (sortOn (show . cellId) . toList $ state) $ \x -> do
+main = do
+  let problem =
+        buildSudoku $ do
+          given "r2c1" 1
+          given "r2c2" 2
+          given "r1c4" 1
+  forM_ (sortOn (show . _cellId) . toList $ (view problemCells problem)) $ \x -> do
     putStrLn . T.unpack . formatCell $ x
