@@ -24,10 +24,7 @@ newtype CellId = CellId T.Text deriving (Eq, Generic, Show)
 instance Hashable CellId
 instance Hashable GroupId
 
--- TODO: Probably don't need a datatype here
-data Constraint =
-  MustBe (S.HashSet Int)
-  deriving (Show, Eq)
+type Constraint = S.HashSet Int
 
 data Cell = Cell
   { cellId :: CellId
@@ -46,28 +43,24 @@ data Group = AllValues (S.HashSet CellId) deriving (Show)
 type State = M.HashMap CellId Cell
 type Structure = M.HashMap GroupId Group
 
-instance Semigroup Constraint where
-  MustBe a <> MustBe b = MustBe (S.intersection a b)
 
 allValues = [1..4]
 
-instance Monoid Constraint where
-  mempty = MustBe (S.fromList allValues)
 
 -- TODO: implies types aren't right yet
-constraintValues (MustBe xs) = xs
+constraintValues xs = xs
 
 mkCell :: T.Text -> [T.Text] -> Cell
 mkCell name groupIds = Cell
   { cellId = CellId name
-  , cellConstraint = mempty
+  , cellConstraint = S.fromList allValues
   , cellGroups = S.fromList . map GroupId $ groupIds
   }
 
 state =
-  constrain (CellId "r2c1") (MustBe (S.singleton 1)) $
-  constrain (CellId "r2c2") (MustBe (S.singleton 2)) $
-  constrain (CellId "r1c4") (MustBe (S.singleton 1)) $
+  constrain (CellId "r2c1") (S.singleton 1) $
+  constrain (CellId "r2c2") (S.singleton 2) $
+  constrain (CellId "r1c4") (S.singleton 1) $
   M.fromList . map (\x -> (cellId x, x)) $
   [ mkCell "r1c1" ["r1", "s1"]
   , mkCell "r1c2" ["r1", "s1"]
@@ -98,21 +91,19 @@ constrain cid constraint state =
   else
     let state' = M.adjust (\c -> c { cellConstraint = constraint }) cid state in
     let newCell = state' ! cid in
+    let xs = cellConstraint newCell in
+    let n = length . S.toList $ xs in
+    let groups =
+                  map (\x -> structure ! x)
+                $ (S.toList $ cellGroups newCell) in
+    let x = groups :: [Group] in
 
-    case (cellConstraint newCell) of
-      MustBe xs ->
-        let n = length . S.toList $ xs in
-        let groups =
-                      map (\x -> structure ! x)
-                    $ (S.toList $ cellGroups newCell) in
-        let x = groups :: [Group] in
+    let filtered = filter (hasNCellsMatchingConstraint n (cellConstraint newCell) state') (trace (show groups) groups) in
 
-        let filtered = filter (hasNCellsMatchingConstraint n (cellConstraint newCell) state') (trace (show groups) groups) in
+    -- WANT: Groups where length of cells with same constraint == n
+    let state'' = foldl' (applyF $ cellConstraint newCell) state' (trace (show filtered) filtered) in
 
-        -- WANT: Groups where length of cells with same constraint == n
-        let state'' = foldl' (applyF $ cellConstraint newCell) state' (trace (show filtered) filtered) in
-
-        state''
+    state''
 
 -- Every cell that doesn't match constraint, subtract constraint from
 applyF :: Constraint -> State -> Group -> State
@@ -129,7 +120,7 @@ applyF constraint state group =
       if constraint == cellConstraint cell then
         state
       else
-        constrain cid (MustBe $ S.difference (constraintValues . cellConstraint $ cell) (constraintValues constraint)) state
+        constrain cid (S.difference (constraintValues . cellConstraint $ cell) (constraintValues constraint)) state
 
 hasNCellsMatchingConstraint n constraint state group =
   case group of
