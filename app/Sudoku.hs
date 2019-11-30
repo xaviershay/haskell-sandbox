@@ -13,7 +13,7 @@ module Main where
 import qualified Data.HashSet as S
 import qualified Data.HashMap.Strict as M
 import Data.HashMap.Strict ((!))
-import Data.List (foldl', (\\))
+import Data.List (foldl', (\\), subsequences)
 import Data.Foldable (toList)
 import qualified Data.Text as T
 import Control.Monad (forM_, when)
@@ -27,7 +27,12 @@ import Control.Monad.Freer.State (State(..), get, gets, put, runState)
 import Control.Lens (view, makeLenses, _Just, at)
 import Control.Lens (ASetter, view, over, set)
 
-data Group = AllValues (S.HashSet CellId) deriving (Show)
+data Group =
+    AllValues (S.HashSet CellId) -- This set of cells must span all values
+  | Sandwich Int [CellId]        -- The cells between min/max value must eq value
+  deriving (Show)
+
+
 
 instance Semigroup Group where
   -- See comment on SemiGroup Cell
@@ -101,35 +106,17 @@ instance Semigroup Cell where
 instance Monoid Cell where
   mempty = mkCell "" []
 
-state =
-  M.fromList . map (\x -> (_cellId x, x)) $
-  [ mkCell "r1c1" ["r1", "s1"]
-  , mkCell "r1c2" ["r1", "s1"]
-  , mkCell "r1c3" ["r1", "s2"]
-  , mkCell "r1c4" ["r1", "s2"]
-  , mkCell "r2c1" ["r2", "s1"]
-  , mkCell "r2c2" ["r2", "s1"]
-  , mkCell "r2c3" ["r2", "s2"]
-  , mkCell "r2c4" ["r2", "s2"]
-  ]
-
-structure = M.fromList
-  [ (GroupId "r1", AllValues $ S.fromList . map CellId $ ["r1c1", "r1c2", "r1c3", "r1c4"])
-  , (GroupId "r2", AllValues $ S.fromList . map CellId $ ["r2c1", "r2c2", "r2c3", "r2c4"])
-  , (GroupId "s1", AllValues $ S.fromList . map CellId $ ["r1c1", "r1c2", "r2c1", "r2c2"])
-  , (GroupId "s2", AllValues $ S.fromList . map CellId $ ["r2c3", "r2c4", "r2c3", "r2c4"])
-  ]
-
 buildSudoku :: Eff '[ State Problem ] m -> Problem
 buildSudoku m = runApp (Problem { _problemCells = state, _problemStructure = structure }) m
 
 -- This is gross, will learn more with new types of groups (e.g. sandwich)
-getCells (AllValues xs) = xs
+getCells (AllValues xs) = toList xs
+getCells (Sandwich _ xs) = xs
 
 constrain :: AppEff effs => CellId -> Constraint -> Eff effs ()
 constrain cid value = do
   existing <- getConstraint cid
-  
+
   when (existing /= value) $ do
     assign (problemCells . at cid . _Just . cellConstraint) value
 
@@ -145,16 +132,42 @@ constrain cid value = do
     forM_ groupIds $ \groupId -> do
       -- TODO: provide structure as a separate read only effect
       group <- gets . view $ problemStructure . at groupId . _Just
-      let cellIds = toList $ getCells group
-      cells <- mapM (\x -> gets . view $ problemCells . at x . _Just) cellIds
 
-      let matching = filter (\cell -> view cellConstraint cell == value) cells
+      case group of
+        AllValues xs -> do
+          let cellIds = toList xs
+          cells <- mapM (\x -> gets . view $ problemCells . at x . _Just) cellIds
 
-      when (length matching == (length . toList $ value)) $ do
-        forM_ (cells \\ matching) $ \cell -> do
-          constrain
-            (view cellId cell)
-            (S.difference (view cellConstraint cell) value)
+          let matching = filter (\cell -> view cellConstraint cell == value) cells
+
+          when (length matching == (length . toList $ value)) $ do
+            forM_ (cells \\ matching) $ \cell -> do
+              constrain
+                (view cellId cell)
+                (S.difference (view cellConstraint cell) value)
+        Sandwich t xs -> do
+          if toList value `elem` subsequences [1,4] then
+              do
+                let components = sortOn length . filter ((==) t . sum) . subsequences $ allValues
+                -- For forwards direction, find min & maximum length (given remaining cells)
+                let lengths = map length components
+                let mn = minimum lengths
+                let mx = maximum lengths
+                -- Restrict outside that bounds "can't be max value"
+
+
+
+                -- Filter components to <= max length
+                -- Calculate possibleValues for cell (MustBe)
+                let possibleValues = foldl' (\a v -> zipWith (++) (replicate (length v) v) (a ++ repeat [])) [[]] $ components
+                -- Constraint them
+                -- Find the current cell in xs
+                -- then send possible values forward and backward
+                return ()
+          else
+            return ()
+
+          -- If cell is min/max, enumerate the different ways to make the sum, then constraint cells before/after it
 
 getConstraint :: AppEff effs => CellId -> Eff effs Constraint
 getConstraint cid =
@@ -167,11 +180,46 @@ given cid value = do
 formatCell (Cell { _cellId = CellId cid, _cellConstraint = constraint}) =
   cid <> " " <> (T.pack . show $ constraint)
 
+--state =
+--  M.fromList . map (\x -> (_cellId x, x)) $
+--  [ mkCell "r1c1" ["r1", "s1"]
+--  , mkCell "r1c2" ["r1", "s1"]
+--  , mkCell "r1c3" ["r1", "s2"]
+--  , mkCell "r1c4" ["r1", "s2"]
+--  , mkCell "r2c1" ["r2", "s1"]
+--  , mkCell "r2c2" ["r2", "s1"]
+--  , mkCell "r2c3" ["r2", "s2"]
+--  , mkCell "r2c4" ["r2", "s2"]
+--  ]
+--
+--structure = M.fromList
+--  [ (GroupId "r1", AllValues $ S.fromList . map CellId $ ["r1c1", "r1c2", "r1c3", "r1c4"])
+--  , (GroupId "r2", AllValues $ S.fromList . map CellId $ ["r2c1", "r2c2", "r2c3", "r2c4"])
+--  , (GroupId "s1", AllValues $ S.fromList . map CellId $ ["r1c1", "r1c2", "r2c1", "r2c2"])
+--  , (GroupId "s2", AllValues $ S.fromList . map CellId $ ["r2c3", "r2c4", "r2c3", "r2c4"])
+--  ]
+state =
+  M.fromList . map (\x -> (_cellId x, x)) $
+  [ mkCell "r1c1" ["r1", "s1"]
+  , mkCell "r1c2" ["r1", "s1"]
+  , mkCell "r1c3" ["r1", "s1"]
+  , mkCell "r1c4" ["r1", "s1"]
+  ]
+
+structure = M.fromList
+  [ (GroupId "r1", AllValues $ S.fromList . map CellId $ ["r1c1", "r1c2", "r1c3", "r1c4"])
+  , (GroupId "s1", Sandwich 2 $ map CellId ["r1c1", "r1c2", "r1c3", "r1c4"])
+  ]
+
 main = do
+  --let problem =
+  --      buildSudoku $ do
+  --        given "r2c1" 1
+  --        given "r2c2" 2
+  --        given "r1c4" 1
   let problem =
         buildSudoku $ do
-          given "r2c1" 1
-          given "r2c2" 2
-          given "r1c4" 1
+          given "r1c1" 1
+
   forM_ (sortOn (show . _cellId) . toList $ (view problemCells problem)) $ \x -> do
     putStrLn . T.unpack . formatCell $ x
