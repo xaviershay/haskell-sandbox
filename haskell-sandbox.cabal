@@ -113,7 +113,16 @@ executable sudoku
                      , lens
                      , sort
                      , freer-simple
+                     , hashable
                      , text
+  default-language:    Haskell2010
+
+executable generic-lens
+  hs-source-dirs:      app
+  main-is:             GenericLens.hs
+  ghc-options:         -threaded -rtsopts -with-rtsopts=-N
+  build-depends:       base
+                     , haskell-sandbox
   default-language:    Haskell2010
 
 test-suite haskell-sandbox-test
