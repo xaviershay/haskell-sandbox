@@ -6,7 +6,7 @@ import Data.IxSet hiding (groupBy)
 
 import           Text.Parsec            hiding (many, optional)
 import           Text.Parsec.Expr
-import Data.List hiding (insert)
+import Data.List hiding (insert, delete, null)
 import Data.Function (on)
 import Data.Ord
 
@@ -25,6 +25,8 @@ instance Show CellData where
   show Open = "!"
   show (OpenN x) = show x
 
+data CellAttribute = KnownSize
+  deriving (Eq, Ord)
 
 data Cell = Cell {
   location :: Location,
@@ -49,6 +51,9 @@ instance Indexable Cell where
   empty = ixSet
             [ ixFun (\c -> [c.location])
             , ixFun (\c -> [c.contents])
+            , ixFun (\c -> case c.contents of
+                             (OpenN _) -> [KnownSize]
+                             _ -> [])
             ]
 
 mkCell :: Location -> CellData -> Cell
@@ -57,22 +62,64 @@ mkCell loc contents = Cell {
   contents = contents
 }
 
-derpCell = mkCell (0, 0) Unknown
+neighbours :: Cell -> Shape -> Shape
+neighbours = undefined
 
-testSet = updateIx (derpCell.location) derpCell empty
+allNeighbours :: Cell -> Shape -> Shape
+allNeighbours c shape = allNeighbours' (insert c empty) shape
+
+allNeighbours' :: Shape -> Shape -> Shape
+allNeighbours' acc remaining =
+  case (toList acc, toList remaining) of
+    ([], _) -> error "shouldn't happen"
+    (x, []) -> acc
+    ((x:xs), _) -> let
+                       ns = neighbours x remaining
+                       newRem = foldr delete remaining (toList ns)
+                     in
+                       if Data.IxSet.null ns then
+                         acc
+                       else
+                         allNeighbours' (acc ||| ns) newRem
+
+--getKnownShapes :: Shape -> [Shape]
+--getKnownShapes board =
+--  let
+--    remaining = board @= KnownSize
+--  in
+--
+--  case toList remaining of
+--    [] -> []
+--    (x:xs) ->
+--      let ns = neighbours x remaining in
+
+-- Get list of all OpenN cells
+-- Group into shapes
+-- collect until remaining is empty
+--   - place first element into queue
+--   - pop head of queue
+--   - remove from remaining
+--   - add to current shape
+--   - get neighbours (from remaining)
+--       add to back of queue
+-- [Shape]
+-- Filter down to complete ones
+-- For each, create walls from all unknown neighbours
+
 main = do
-  putStrLn . show $ testSet @= Unknown
-  case fmap toBoard $ parse boardParser "" "3_!\n24*" of
-    Right board -> putStrLn (toAscii board)
+  case fmap toBoard $ parse boardParser "" "1_" of
+    Right board -> do
+      putStrLn . show $ board @= KnownSize
+      putStrLn (toAscii board)
     Left pe -> putStrLn . show $ pe
 
 toAscii :: Board -> String
-toAscii board =
+toAscii =
     intercalate "\n"
-  $ map (intercalate "" . map (show . contents) . sortBy (comparing (fst . location)))
-  $ groupBy (on (==) (snd . location))
-  $ sortBy (comparing (snd . location))
-  $ toList board
+  . map (intercalate "" . map (show . contents) . sortBy (comparing (fst . location)))
+  . groupBy (on (==) (snd . location))
+  . sortBy (comparing (snd . location))
+  . toList
 
 toBoard :: [[CellData]] -> Board
 toBoard rows =
