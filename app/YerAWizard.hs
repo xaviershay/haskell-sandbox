@@ -88,7 +88,7 @@ cards =
   , mkCard "Reparo" Spell 3 $
       choose [ gain $ influence +~ 2 , draw 1 ]
 
-  , mkCard "Hargid" Ally 3 $
+  , mkCard "Hagrid" Ally 3 $
       combine [ gain $ power +~ 1, allHeroes $ draw 1 ]
   ]
 
