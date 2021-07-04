@@ -59,16 +59,54 @@ axiomAssociateSum = Axiom {
     f (Sum a (Sum b c)) = Right (Sum (Sum a b) c)
     f t = Left t
 
+axiomCommuteProduct = Axiom {
+  description = "Commutative law for multiplication",
+  example = (Product (Var "a") (Var "b"), Product (Var "b") (Var "a")),
+  implementation = f
+}
+  where
+    f (Product a b) = Right (Product b a)
+    f t = Left t
+
+axiomAssociateProduct = Axiom {
+  description = "Associative law for multiplication",
+  example = (
+    Product (Var "a") (Product (Var "b") (Var "c")),
+    Product (Product (Var "a") (Var "b")) (Var "c")
+  ),
+  implementation = f
+}
+  where
+    f (Product (Product a b) c) = Right (Product a (Product b c))
+    f (Product a (Product b c)) = Right (Product (Product a b) c)
+    f t = Left t
+
 axiomSumConst = Axiom {
   description = "Sum constants",
   example = (
-    Sum (Var "a") (Const 2),
-    (Var "c")
+    Sum (Const 1) (Const 2),
+    (Const 3)
   ),
   implementation = f
 }
   where
     f (Sum (Const a) (Const b)) = Right (Const $ a + b)
+    f (Sum (Const 0) t) = Right t
+    f (Sum t (Const 0)) = Right t
+    f t = Left t
+
+axiomMultiplyConst = Axiom {
+  description = "Multiply constants",
+  example = (
+    Product (Const 2) (Const 3),
+    (Const 6)
+  ),
+  implementation = f
+}
+  where
+    f (Product (Const a) (Const b)) = Right (Const $ a * b)
+    f (Product (Const 1) t) = Right t
+    f (Product t (Const 1)) = Right t
     f t = Left t
 
 axiomIdentity = Axiom {
@@ -97,6 +135,21 @@ axiomStepSeries = Axiom {
         (Series v (Sum i (Const 1)) t)
     f t = Left t
 
+axiomDistribute = Axiom {
+  description = "Distributive law",
+  example = (
+    (Product (Var "a") (Sum (Var "b") (Var "c"))),
+    (Sum (Product (Var "a") (Var "b")) (Product (Var "a") (Var "c")))
+  ),
+  implementation = f
+}
+  where
+    f (Sum (Product p1l p1r) (Product p2l p2r))
+      | p1l == p2l = Right $ Product p1l (Sum p1r p2r)
+    f (Product pl (Sum sl sr)) = Right $ Sum (Product pl sl) (Product pl sr)
+    f (Sum v@(Var{}) p@(Product{})) = f (Sum (Product v (Const 1)) p)
+    f t = Left t
+
 instantiateVariable :: String -> Term -> Term -> Term
 instantiateVariable name value (Var vname) | name == vname = value
 instantiateVariable _ _ t = t
@@ -104,20 +157,26 @@ instantiateVariable _ _ t = t
 allAxioms =
   [ axiomCommuteSum
   , axiomAssociateSum
+  , axiomCommuteProduct
+  , axiomAssociateProduct
   , axiomSumConst
+  , axiomMultiplyConst
   , axiomIdentity
   , axiomStepSeries
+  , axiomDistribute
   ]
 
 data Term =
   Const Integer |
   Sum Term Term |
+  Product Term Term |
   Var String |
   Series String Term Term
   deriving (Show, Eq)
 
 walk :: (Term -> Term) -> Term -> Term
 walk f (Sum a b) = f (Sum (walk f a) (walk f b))
+walk f (Product a b) = f (Product (walk f a) (walk f b))
 walk f (Series v i t) = f (Series v (walk f i) (walk f t))
 walk f t@(Const{}) = f t
 walk f t@(Var{}) = f t
@@ -129,6 +188,7 @@ data Matcher =
 
 modify :: Matcher -> (Term -> Either Term Term) -> Term -> Either Term Term
 modify (LeftMatcher x) f t@(Sum a b) | x == a = f t
+modify (LeftMatcher x) f t@(Product a b) | x == a = f t
 modify RootMatcher f t = f t
 modify SeriesMatcher f t@(Series{}) = f t
 modify m f (Sum a b) =
@@ -137,12 +197,19 @@ modify m f (Sum a b) =
     lhs = modify m f b
   in
     Sum <$> rhs <*> lhs
+modify m f (Product a b) =
+  let
+    rhs = modify m f a
+    lhs = modify m f b
+  in
+    Product <$> rhs <*> lhs
 modify m f (Const a) = Right (Const a)
 modify m f t = Right t
 
 toAscii (Const a) = show a
 toAscii (Var a) = a
 toAscii (Sum a b) = "(" <> toAscii a <> " + " <> toAscii b <> ")"
+toAscii (Product a b) = "(" <> toAscii a <> " * " <> toAscii b <> ")"
 toAscii (Series v i t) = "Σ[" <> v <> " = " <> toAscii i <> "](" <> toAscii t <> ")"
 
 data Env = Env Term deriving (Show)
@@ -161,7 +228,10 @@ apply m axiom = do
   -- TODO: Handle error
   case modify m (implementation axiom) t of
     Right t' -> do
-      let t'' = walk (ignoreError . implementation axiomSumConst) t'
+      let t'' = walk (
+                  ignoreError . implementation axiomSumConst .
+                  ignoreError . implementation axiomMultiplyConst
+                ) t'
       tell [(t'', axiom)]
 
       put (Env t'')
@@ -182,9 +252,18 @@ runProcess t m = do
 --  apply RootMatcher axiomAssociateSum
 --  apply (LeftMatcher (Const 2)) axiomSumConst
 
-body = runProcess (Series "k" (Const 0) (Sum (Var "x") (Var "k"))) $ do
-  apply SeriesMatcher axiomStepSeries
-  apply SeriesMatcher axiomStepSeries
+--body = runProcess (Series "k" (Const 0) (Sum (Var "x") (Var "k"))) $ do
+--  apply SeriesMatcher axiomStepSeries
+--  apply SeriesMatcher axiomStepSeries
+
+--body = runProcess (Product (Const 2) (Product (Const 3) (Const 4))) $ do
+--  apply RootMatcher axiomCommuteProduct
+--  apply (LeftMatcher (Const 3)) axiomMultiplyConst
+
+body = runProcess (Sum (Var "x") (Product (Var "x") (Var "x"))) $ do
+  apply RootMatcher axiomDistribute
+  apply RootMatcher axiomDistribute
+  --apply RootMatcher axiomDistribute
 
 main = do
   forM_ (zip allAxioms [1..]) $ \(axiom, i) -> do
