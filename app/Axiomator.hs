@@ -6,6 +6,7 @@
 
 module Main where
 
+import Debug.Trace (trace, traceM)
 import Data.List
 import Data.Hashable
 import GHC.Generics
@@ -38,7 +39,7 @@ instance Show Axiom where
 
 axiomCommuteSum = Axiom {
   description = "Commutative law for addition",
-  example = (Sum (Const 1) (Const 2), Sum (Const 2) (Const 1)),
+  example = (Sum (Var "a") (Var "b"), Sum (Var "b") (Var "a")),
   implementation = f
 }
   where
@@ -48,8 +49,8 @@ axiomCommuteSum = Axiom {
 axiomAssociateSum = Axiom {
   description = "Associative law for addition",
   example = (
-    Sum (Const 1) (Sum (Const 2) (Const 3)),
-    Sum (Sum (Const 1) (Const 2)) (Const 3)
+    Sum (Var "a") (Sum (Var "b") (Var "c")),
+    Sum (Sum (Var "a") (Var "b")) (Var "c")
   ),
   implementation = f
 }
@@ -61,8 +62,8 @@ axiomAssociateSum = Axiom {
 axiomSumConst = Axiom {
   description = "Sum constants",
   example = (
-    Sum (Const 1) (Const 2),
-    (Const 3)
+    Sum (Var "a") (Const 2),
+    (Var "c")
   ),
   implementation = f
 }
@@ -70,24 +71,66 @@ axiomSumConst = Axiom {
     f (Sum (Const a) (Const b)) = Right (Const $ a + b)
     f t = Left t
 
+axiomIdentity = Axiom {
+  description = "Identity",
+  example = (
+    (Var "a"),
+    (Var "a")
+  ),
+  implementation = f
+}
+  where
+    f t = Right t
+
+axiomStepSeries = Axiom {
+  description = "Step series",
+  example = (
+    (Series "k" (Var "a") (Var "k")),
+    (Sum (Var "a") (Series "k" (Sum (Var "a") (Const 1)) (Var "k")))
+  ),
+  implementation = f
+}
+  where
+    f (Series v i t) = Right $
+      Sum
+        (walk (instantiateVariable v i) t)
+        (Series v (Sum i (Const 1)) t)
+    f t = Left t
+
+instantiateVariable :: String -> Term -> Term -> Term
+instantiateVariable name value (Var vname) | name == vname = value
+instantiateVariable _ _ t = t
+
 allAxioms =
   [ axiomCommuteSum
   , axiomAssociateSum
   , axiomSumConst
+  , axiomIdentity
+  , axiomStepSeries
   ]
 
 data Term =
   Const Integer |
-  Sum Term Term
+  Sum Term Term |
+  Var String |
+  Series String Term Term
   deriving (Show, Eq)
+
+walk :: (Term -> Term) -> Term -> Term
+walk f (Sum a b) = f (Sum (walk f a) (walk f b))
+walk f (Series v i t) = f (Series v (walk f i) (walk f t))
+walk f t@(Const{}) = f t
+walk f t@(Var{}) = f t
 
 data Matcher =
   RootMatcher
   | LeftMatcher Term
+  | SeriesMatcher
 
 modify :: Matcher -> (Term -> Either Term Term) -> Term -> Either Term Term
 modify (LeftMatcher x) f t@(Sum a b) | x == a = f t
 modify RootMatcher f t = f t
+modify SeriesMatcher f t@(Series{}) = f t
 modify m f (Sum a b) =
   let
     rhs = modify m f a
@@ -95,49 +138,60 @@ modify m f (Sum a b) =
   in
     Sum <$> rhs <*> lhs
 modify m f (Const a) = Right (Const a)
-modify m f t = Left t
+modify m f t = Right t
 
 toAscii (Const a) = show a
+toAscii (Var a) = a
 toAscii (Sum a b) = "(" <> toAscii a <> " + " <> toAscii b <> ")"
-
---main = putStrLn . toAscii
---  -- . modify (LeftMatcher (Const 3)) foldConst
---  . modify (LeftMatcher (Const 1)) foldConst
---  . commuteSum
---  . associateSumRL
---  $ Sum (Const 1) (Sum (Const 2) (Const 3))
-
---apply (Term -> Term) -> Workspace Term
-
+toAscii (Series v i t) = "Σ[" <> v <> " = " <> toAscii i <> "](" <> toAscii t <> ")"
 
 data Env = Env Term deriving (Show)
 
 type Log = [(Term, Axiom)]
 type AppEff effs = Members '[ Writer Log, State Env ] effs
 
+ignoreError :: Either a a -> a
+ignoreError (Left x) = x
+ignoreError (Right x) = x
+
 apply :: AppEff effs => Matcher -> Axiom -> Eff effs ()
 apply m axiom = do
   (Env t) <- get
 
   -- TODO: Handle error
-  let (Right t') = modify m (implementation axiom) t
-  tell [(t', axiom)]
+  case modify m (implementation axiom) t of
+    Right t' -> do
+      let t'' = walk (ignoreError . implementation axiomSumConst) t'
+      tell [(t'', axiom)]
 
-  put (Env t')
+      put (Env t'')
+    Left t' -> do
+      error $ "couldn't apply " <> description axiom <> " to " <> toAscii t' <> " (full term is " <> toAscii t <> ")"
 
-working = do
-  apply RootMatcher axiomCommuteSum
-  apply RootMatcher axiomAssociateSum
-  apply RootMatcher axiomAssociateSum
-  apply (LeftMatcher (Const 2)) axiomSumConst
-  apply RootMatcher axiomSumConst
+
+runProcess t m = do
+  putStrLn . toAscii $ t
+  let (_, log) = runApp (Env t) m
+  forM_ log $ \(t, axiom) -> do
+    putStr (toAscii t)
+    putStrLn $ "\t; " <> description axiom
+
+--body = runProcess (Sum (Var "x") (Sum (Const 2) (Const 3))) $ do
+--  apply RootMatcher axiomCommuteSum
+--  apply RootMatcher axiomAssociateSum
+--  apply RootMatcher axiomAssociateSum
+--  apply (LeftMatcher (Const 2)) axiomSumConst
+
+body = runProcess (Series "k" (Const 0) (Sum (Var "x") (Var "k"))) $ do
+  apply SeriesMatcher axiomStepSeries
+  apply SeriesMatcher axiomStepSeries
 
 main = do
   forM_ (zip allAxioms [1..]) $ \(axiom, i) -> do
     putStr (show i)
     putStr ". "
     putStr (description axiom)
-    putStr ": "
+    putStr ":\t"
     let (lhs, rhs) = example axiom
     putStr $ toAscii lhs
     putStr " = "
@@ -145,12 +199,7 @@ main = do
 
   putStrLn ""
 
-  let t = Sum (Const 1) (Sum (Const 2) (Const 3))
-  putStrLn . toAscii $ t
-  let (_, log) = runApp (Env t) working
-  forM_ log $ \(t, axiom) -> do
-    putStr (toAscii t)
-    putStrLn $ "\t; " <> description axiom
+  body
 
 runApp :: Env -> Eff '[ Writer Log, State Env] a -> (Term, Log)
 runApp env m = do
