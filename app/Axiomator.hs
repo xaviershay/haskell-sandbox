@@ -34,6 +34,9 @@ data Axiom = Axiom {
   implementation :: Term -> Either Term Term
 }
 
+instance Eq Axiom where
+  a == b = description a == description b
+
 instance Show Axiom where
   show (Axiom { description = d }) = d
 
@@ -91,8 +94,6 @@ axiomSumConst = Axiom {
 }
   where
     f (Sum (Const a) (Const b)) = Right (Const $ a + b)
-    f (Sum (Const 0) t) = Right t
-    f (Sum t (Const 0)) = Right t
     f t = Left t
 
 axiomMultiplyConst = Axiom {
@@ -105,6 +106,30 @@ axiomMultiplyConst = Axiom {
 }
   where
     f (Product (Const a) (Const b)) = Right (Const $ a * b)
+    f t = Left t
+
+axiomIdentitySum = Axiom {
+  description = "Additive identity",
+  example = (
+    (Sum (Sum (Const 0) (Var "a")) (Const 0)),
+    (Var "a")
+  ),
+  implementation = f
+}
+  where
+    f (Sum (Const 0) t) = Right t
+    f (Sum t (Const 0)) = Right t
+    f t = Left t
+
+axiomIdentityProduct = Axiom {
+  description = "Multiplicative identity",
+  example = (
+    (Product (Product (Const 1) (Var "a")) (Const 1)),
+    (Var "a")
+  ),
+  implementation = f
+}
+  where
     f (Product (Const 1) t) = Right t
     f (Product t (Const 1)) = Right t
     f t = Left t
@@ -159,11 +184,12 @@ allAxioms =
   , axiomAssociateSum
   , axiomCommuteProduct
   , axiomAssociateProduct
+  , axiomIdentitySum
+  , axiomIdentityProduct
+  , axiomDistribute
+  , axiomStepSeries
   , axiomSumConst
   , axiomMultiplyConst
-  , axiomIdentity
-  , axiomStepSeries
-  , axiomDistribute
   ]
 
 data Term =
@@ -238,14 +264,6 @@ apply m axiom = do
     Left t' -> do
       error $ "couldn't apply " <> description axiom <> " to " <> toAscii t' <> " (full term is " <> toAscii t <> ")"
 
-
-runProcess t m = do
-  putStrLn . toAscii $ t
-  let (_, log) = runApp (Env t) m
-  forM_ log $ \(t, axiom) -> do
-    putStr (toAscii t)
-    putStrLn $ "\t; " <> description axiom
-
 --body = runProcess (Sum (Var "x") (Sum (Const 2) (Const 3))) $ do
 --  apply RootMatcher axiomCommuteSum
 --  apply RootMatcher axiomAssociateSum
@@ -265,20 +283,35 @@ body = runProcess (Sum (Var "x") (Product (Var "x") (Var "x"))) $ do
   apply RootMatcher axiomDistribute
   --apply RootMatcher axiomDistribute
 
-main = do
-  forM_ (zip allAxioms [1..]) $ \(axiom, i) -> do
+printAxioms axioms = do
+  let paddingIndex = length (show $ length axioms)
+  let paddingDesc = maximum . map (length . description) $ axioms
+  forM_ (zip axioms [1..]) $ \(axiom, i) -> do
     putStr (show i)
     putStr ". "
+    putStr $ replicate (paddingIndex - length (show i)) ' '
     putStr (description axiom)
-    putStr ":\t"
+    putStr ": "
+    putStr $ replicate (paddingDesc - length (description axiom)) ' '
     let (lhs, rhs) = example axiom
     putStr $ toAscii lhs
     putStr " = "
     putStrLn $ toAscii rhs
 
+runProcess t m = do
+  let (_, log) = runApp (Env t) m
+  let usedAxioms = nub (map snd log)
+  printAxioms usedAxioms
   putStrLn ""
 
-  body
+  let paddingT = maximum $ map (length . toAscii . fst) log
+  putStrLn . toAscii $ t
+  forM_ log $ \(t, axiom) -> do
+    putStr (toAscii t)
+    putStr $ replicate (paddingT - length (toAscii t)) ' '
+    putStrLn $ " ; " <> description axiom
+
+main = body
 
 runApp :: Env -> Eff '[ Writer Log, State Env] a -> (Term, Log)
 runApp env m = do
