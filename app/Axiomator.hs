@@ -9,15 +9,17 @@ module Main where
 import Debug.Trace (trace, traceM)
 import Data.List
 import Data.Hashable
-import GHC.Generics
+import GHC.Generics hiding (Infix, Prefix)
 import qualified Data.Tuple
 import qualified Data.HashMap.Strict as M
 import Data.Maybe (catMaybes, isNothing, fromJust)
 import Data.Monoid ((<>))
 import Control.Monad (msum, forM_)
-import Text.Parsec( runParser, char, (<|>), ParseError, many, many1, digit, eof, choice)
 
-import Control.Monad.Freer (Eff, Members, run, runM)
+import Text.Parsec hiding (State(..))
+import Text.Parsec.Expr
+
+import Control.Monad.Freer (Eff, Members, Member, run, runM)
 import Control.Monad.Freer.Error (Error, throwError, runError)
 import Control.Monad.Freer.State (State(..), get, gets, put, runState)
 import Control.Monad.Freer.Writer (Writer(..), tell, runWriter)
@@ -223,7 +225,58 @@ allAxioms =
   , axiomFactorialConst
   ]
 
+--data Crumb =
+--  ??
+--
+--data Tree a = Node a [Tree a]
+--data TreeTerm =
+--  Sum
+--  Const Integer
+
+
+data Crumb =
+    LeftCrumb Term
+  | RightCrumb Term
+  deriving (Show)
+
+type Crumbs = [Crumb]
+type Zipper = (Term, Crumbs)
+
+goLeft :: Zipper -> Zipper
+goLeft (Sum l r, cs) = (l, LeftCrumb (Sum Void r):cs)
+goLeft (Product l r, cs) = (l, LeftCrumb (Product Void r):cs)
+goLeft (Fraction l r, cs) = (l, LeftCrumb (Fraction Void r):cs)
+goLeft (Exponent l r, cs) = (l, LeftCrumb (Exponent Void r):cs)
+goLeft (t, cs) = (Void, cs)
+
+goRight :: Zipper -> Zipper
+goRight (Sum l r, cs) = (r, RightCrumb (Sum l Void):cs)
+goRight (Product l r, cs) = (r, RightCrumb (Product l Void):cs)
+goRight (Fraction l r, cs) = (r, RightCrumb (Fraction l Void):cs)
+goRight (Exponent l r, cs) = (r, RightCrumb (Exponent l Void):cs)
+goRight (Series v i t, cs) = (t, RightCrumb (Series v i Void):cs)
+goRight (Factorial t, cs) = (t, RightCrumb (Factorial Void):cs)
+goRight (t, cs) = (Void, cs)
+
+goUp :: Zipper -> Zipper
+goUp (t, LeftCrumb (Sum _ r):cs) = (Sum t r, cs)
+goUp (t, RightCrumb (Sum l _):cs) = (Sum l t, cs)
+
+filterZip :: (Term -> Bool) -> Zipper -> [Zipper]
+filterZip f (Void, _) = []
+filterZip f z@(t, cs) = do
+  let currentNode = if f t then [(t, cs)] else []
+      lhs = filterZip f (goLeft z)
+      rhs = filterZip f (goRight z)
+    in currentNode ++ lhs ++ rhs
+
+isConst (Const t) = True
+isConst _ = False
+
+testF = head $ filterZip isConst (Sum (Const 3) (Sum (Const 1) (Const 4)), [])  
+
 data Term =
+  Void |
   Const Integer |
   Sum Term Term |
   Product Term Term |
@@ -267,26 +320,6 @@ matcherApplies (LeftMatcher x) (Product a _) = x == a
 matcherApplies (SeriesMatcher v) (Series v' _ _) = v == v'
 matcherApplies AllMatcher _ = True
 matcherApplies _ _ = False
-
---modify :: Matcher -> (Term -> Either Term Term) -> Term -> Either Term Term
---modify (LeftMatcher x) f t@(Sum a b) | x == a = f t
---modify (LeftMatcher x) f t@(Product a b) | x == a = f t
---modify RootMatcher f t = f t
---modify (SeriesMatcher v1) f (Series v2 i t) | v1 == v2 = (modify (SeriesMatcher v1) f t) >>= \inner -> f (Series v2 i inner)
---modify m f (Sum a b) =
---  let
---    rhs = modify m f a
---    lhs = modify m f b
---  in
---    Sum <$> rhs <*> lhs
---modify m f (Product a b) =
---  let
---    rhs = modify m f a
---    lhs = modify m f b
---  in
---    Product <$> rhs <*> lhs
---modify m f (Const a) = Right (Const a)
---modify m f t = Right t
 
 toAscii (Const a) = show a
 toAscii (Var a) = a
@@ -343,20 +376,67 @@ apply m axiom = do
 --  apply RootMatcher axiomDistribute
   --apply RootMatcher axiomDistribute
 
+matchSeries (Series{}) = True
+matchSeries _ = False
+
+
+parens = between (char '(') (char ')')
+natural = read <$> many1 digit
+symbol = many1 (oneOf ['a'..'z'])
+
+termExpr = parens expr <|> Const <$> natural <|> Var <$> symbol
+
+table = [ [postfix "!" Factorial, series "S" ]
+        , [binary "*" Product AssocLeft, binary "/" Fraction AssocLeft ]
+        , [binary "+" Sum AssocLeft ]
+        ]
+
+series op = Prefix $
+  do
+    string op
+    char '['
+    v <- symbol
+    many (char ' ')
+    char '='
+    many (char ' ')
+    i <- termExpr
+    char ']'
+
+    return $ Series v i
+
+postfix name fun = Postfix (do { string name; return fun })
+binary name fun assoc = Infix (do { string name; return fun}) assoc
+
+expr = buildExpressionParser table termExpr
+
+parseTerm input = runParser termExpr () input input
+
+highlightTerms m = do
+  Env t <- get
+
+  let ms = filterZip m (t, [])
+
+  traceM "====="
+  forM_ ms $ \(t',_) -> do
+    traceM . toAscii $ t'
+    traceM "---"
+
 -- TODO: Handle variable aliasing properly for nested series
 e_to t = (Series "k" (Const 0) (Fraction (Exponent t (Var "k")) (Factorial (Var "k"))))
 cos_x = (Series "m" (Const 0) (Product (Exponent (Const (-1)) (Var "m")) (Fraction (Exponent (Var "x") (Product (Const 2) (Var "m"))) (Factorial (Product (Const 2) (Var "m"))))))
 
 body = runProcess (e_to cos_x) $ do
   apply (SeriesMatcher "m") axiomStepSeries
-  apply (SeriesMatcher "k") axiomStepSeries
-  apply AllMatcher axiomFactorialConst
-  apply AllMatcher axiomIdentityProduct
-  apply (SeriesMatcher "m") axiomStepSeries
-  apply (SeriesMatcher "k") axiomStepSeries
-  apply AllMatcher axiomFactorialConst
-  apply AllMatcher axiomIdentityProduct
-  --apply RootMatcher axiomAssociateSum
+--  --apply (SeriesMatcher "k") axiomStepSeries
+--  --apply AllMatcher axiomFactorialConst
+--  --apply AllMatcher axiomIdentityProduct
+--  --apply (SeriesMatcher "m") axiomStepSeries
+--  --apply (SeriesMatcher "k") axiomStepSeries
+--  --apply AllMatcher axiomFactorialConst
+--  --apply AllMatcher axiomIdentityProduct
+--
+--  highlightTerms matchSeries
+--  --apply RootMatcher axiomAssociateSum
 
 printAxioms axioms = do
   let paddingIndex = length (show $ length axioms)
@@ -387,6 +467,7 @@ runProcess t m = do
     putStrLn $ " ; " <> description axiom
 
 main = body
+--main = putStrLn $ show testF
 
 runApp :: Env -> Eff '[ Writer Log, State Env] a -> (Term, Log)
 runApp env m = do
