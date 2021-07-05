@@ -387,6 +387,7 @@ symbol = many1 (oneOf ['a'..'z'])
 termExpr = parens expr <|> Const <$> natural <|> Var <$> symbol
 
 table = [ [postfix "!" Factorial, series "S" ]
+        , [binary "^" Exponent AssocLeft ]
         , [binary "*" Product AssocLeft, binary "/" Fraction AssocLeft ]
         , [binary "+" Sum AssocLeft ]
         ]
