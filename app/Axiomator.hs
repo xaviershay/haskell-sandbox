@@ -381,10 +381,16 @@ matchSeries _ = False
 
 
 parens = between (char '(') (char ')')
-natural = read <$> many1 digit
+
+integer = rd <$> (plus <|> minus <|> number)
+    where rd     = read :: String -> Integer
+          plus   = char '+' *> number
+          minus  = (:) <$> char '-' <*> number
+          number = many1 digit
+
 symbol = many1 (oneOf ['a'..'z'])
 
-termExpr = parens expr <|> Const <$> natural <|> Var <$> symbol
+termExpr = parens expr <|> Const <$> integer <|> Var <$> symbol
 
 table = [ [postfix "!" Factorial, series "S" ]
         , [binary "^" Exponent AssocLeft ]
@@ -410,7 +416,7 @@ binary name fun assoc = Infix (do { string name; return fun}) assoc
 
 expr = buildExpressionParser table termExpr
 
-parseTerm input = runParser termExpr () input input
+parseUnsafe input = let Right x = parse expr input input in x
 
 highlightTerms m = do
   Env t <- get
@@ -424,8 +430,9 @@ highlightTerms m = do
 
 -- TODO: Handle variable aliasing properly for nested series
 e_to t = (Series "k" (Const 0) (Fraction (Exponent t (Var "k")) (Factorial (Var "k"))))
-cos_x = (Series "m" (Const 0) (Product (Exponent (Const (-1)) (Var "m")) (Fraction (Exponent (Var "x") (Product (Const 2) (Var "m"))) (Factorial (Product (Const 2) (Var "m"))))))
+--cos_x = (Series "m" (Const 0) (Product (Exponent (Const (-1)) (Var "m")) (Fraction (Exponent (Var "x") (Product (Const 2) (Var "m"))) (Factorial (Product (Const 2) (Var "m"))))))
 
+cos_x = parseUnsafe "S[m=0]((-1)^m*(x^(2*m))/(2*m)!)"
 body = runProcess (e_to cos_x) $ do
   apply (SeriesMatcher "m") axiomStepSeries
 --  --apply (SeriesMatcher "k") axiomStepSeries
