@@ -194,8 +194,8 @@ axiomStepSeries = Axiom {
 axiomDistribute = Axiom {
   description = "Distributive law",
   example = (
-    (Product (Var "a") (Sum (Var "b") (Var "c"))),
-    (Sum (Product (Var "a") (Var "b")) (Product (Var "a") (Var "c")))
+    parseUnsafe "a*(b+c)",
+    parseUnsafe "(a*b)+(a*c)"
   ),
   implementation = f
 }
@@ -233,6 +233,55 @@ allAxioms =
 --  Sum
 --  Const Integer
 
+--undistribute :: Term -> Zipper -> Zipper
+--
+--undistribute "a" "ab+ac" "a*(b+c)"
+--undistribute "a" "ab+ac" "a*(ab/a+ac/a)"
+--
+--cancelTerm "a" "ab/a" "b/1" -- "b"
+
+p = parseUnsafe
+
+-- distribute "(2*a)(b+c)"
+distribute t (Product a (Sum b c)) =
+  let x = unidentity . cancelTerm t $ Fraction a t in
+
+  unidentity . Product x $
+    Sum
+      (Product t b)
+      (Product t c)
+
+undistribute t (Sum a b) =
+  Product t $
+    Sum
+      (unidentity . cancelTerm t $ Fraction a t)
+      (unidentity . cancelTerm t $ Fraction b t)
+
+cancelTerm :: Term -> Term -> Term
+cancelTerm t f@(Fraction (Product a b) (Product c d)) =
+    case Fraction <$> numerator <*> denominator of
+      Just x -> x
+      Nothing -> f
+  where
+    numerator =
+      case (a, b) of
+        (a, b) | a == t -> Just b
+        (a, b) | b == t -> Just a
+        _               -> Nothing
+    denominator =
+      case (c, d) of
+        (c, d) | c == t -> Just d
+        (c, d) | d == t -> Just c
+        _               -> Nothing
+cancelTerm t (Fraction l@(Product{}) r) = cancelTerm t (Fraction l (Product r (Const 1)))
+cancelTerm t (Fraction l r@(Product{})) = cancelTerm t (Fraction l (Product (Const 1) r))
+cancelTerm t (Fraction l r) = cancelTerm t (Fraction (Product (Const 1) l) (Product (Const 1) r))
+
+unidentity :: Term -> Term
+unidentity (Fraction a (Const 1)) = a
+unidentity (Product (Const 1) a) = a
+unidentity (Product a (Const 1)) = a
+unidentity x = x
 
 data Crumb =
     LeftCrumb Term
