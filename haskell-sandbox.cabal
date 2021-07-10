@@ -130,6 +130,8 @@ executable axiomator
                      , lens
                      , text
                      , freer-simple
+                     , tasty
+                     , tasty-hunit
   default-language:    Haskell2010
 
 test-suite haskell-sandbox-test

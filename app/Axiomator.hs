@@ -3,9 +3,10 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE OverloadedStrings #-}
 
 module Main where
-
+import Data.String (IsString(..))
 import Debug.Trace (trace, traceM)
 import Data.List
 import Data.Hashable
@@ -23,7 +24,8 @@ import Control.Monad.Freer (Eff, Members, Member, run, runM)
 import Control.Monad.Freer.Error (Error, throwError, runError)
 import Control.Monad.Freer.State (State(..), get, gets, put, runState)
 import Control.Monad.Freer.Writer (Writer(..), tell, runWriter)
-
+import Test.Tasty
+import Test.Tasty.HUnit
 --data Axiom =
 --  CommuteSum |
 --  AssociateSumLR |
@@ -230,10 +232,11 @@ ps = putStrLn . toAscii
 
 simplify t = walk f t
   where
-    f (Sum (Const a) (Const b)) = (Const $ a + b)
-    f (Product (Const a) (Const b)) = (Const $ a * b)
-    f (Exponent a (Const 0)) = (Const 1)
+    f (Sum (Const a) (Const b)) = Const $ a + b
+    f (Product (Const a) (Const b)) = Const $ a * b
+    f (Exponent a (Const 0)) = Const 1
     f (Exponent a (Const 1)) = a
+    f (Exponent (Const a) (Const b)) = Const $ a ^ b
     f (Fraction a (Const 1)) = a
     f (Product (Const 1) a) = a
     f (Product a (Const 1)) = a
@@ -264,9 +267,9 @@ cancelTerm (Exponent x y) f@(Fraction (Exponent a b) (Exponent c d)) =
     numerator = if x == a then Just (Exponent a (Sum b (Product (Const (-1)) y))) else Nothing
     denominator = if x == c then Just (Exponent c (Sum d (Product (Const (-1)) y))) else Nothing
 
-cancelTerm x f@(Fraction (Exponent{}) (Exponent{})) = cancelTerm (Exponent x (Const 1)) f
-cancelTerm x (Fraction lhs@(Exponent{}) rhs) = cancelTerm x (Fraction lhs (Exponent rhs (Const 1)))
-cancelTerm x (Fraction lhs rhs@(Exponent{})) = cancelTerm x (Fraction (Exponent lhs (Const 1)) rhs)
+cancelTerm t f@(Fraction (Exponent{}) (Exponent{})) = cancelTerm (Exponent t (Const 1)) f
+cancelTerm t (Fraction lhs@(Exponent{}) rhs) = cancelTerm t (Fraction lhs (Exponent rhs (Const 1)))
+cancelTerm t (Fraction lhs rhs@(Exponent{})) = cancelTerm t (Fraction (Exponent lhs (Const 1)) rhs)
 cancelTerm t f@(Fraction (Product a b) (Product c d)) =
     case Fraction <$> numerator <*> denominator of
       Just x -> x
@@ -338,6 +341,9 @@ data Term =
   Fraction Term Term |
   Exponent Term Term
   deriving (Show, Eq)
+
+instance IsString Term where
+    fromString cs = parseUnsafe cs
 
 walk :: (Term -> Term) -> Term -> Term
 walk f (Sum a b) = f (Sum (walk f a) (walk f b))
@@ -526,8 +532,48 @@ runProcess t m = do
     putStr $ replicate (paddingT - length (toAscii t)) ' '
     putStrLn $ " ; " <> description axiom
 
-main = body
+--main = body
+main = defaultMain tests
 --main = putStrLn $ show testF
+
+validate :: (Term -> Term) -> Term -> Term -> TestTree
+validate f input expected =
+  testCase (toAscii input <> " = " <> toAscii expected) $ (toAscii . simplify $ f input) @?=(toAscii . simplify $ expected)
+
+validateAll name f = testGroup name . map (uncurry $ validate f)
+
+tests = testGroup "Axioms"
+  [ validateAll "simplify" simplify
+    [ ("a+0", "a")
+    , ("0+a", "a")
+    , ("a*1", "a")
+    , ("1*a", "a")
+    , ("a/1", "a")
+    , ("a^1", "a")
+    , ("1+2", "3")
+    , ("1+2+3", "6")
+    , ("2*3", "6")
+    , ("2*3*4", "24")
+    , ("2*3+4", "10")
+    , ("a^0", "1")
+    , ("2^2", "4")
+    ]
+  , validateAll "distribute \"a\"" (distribute "a") $
+      [ ("a*(b+c)", "a*b+a*c")
+      , ("(2*a)*(b+c)", "2*(a*b+a*c)")
+      ]
+  , validateAll "undistribute \"a\"" (undistribute "a")
+      [ ("a*b+a*c", "a*(b+c)")
+      , ("b*a+a*c", "a*(b+c)")
+      , ("a*b+c*a", "a*(b+c)")
+      , ("b*a+c*a", "a*(b+c)")
+      , ("a*b+a", "a*(b+1)")
+      , ("b*a+a", "a*(b+1)")
+      , ("a+a*b", "a*(1+b)")
+      , ("a+b*a", "a*(1+b)")
+      , ("b+c", "a*(b/a+c/a)")
+      ]
+  ]
 
 runApp :: Env -> Eff '[ Writer Log, State Env] a -> (Term, Log)
 runApp env m = do
