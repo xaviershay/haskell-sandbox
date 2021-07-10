@@ -238,6 +238,10 @@ simplify t = walk f t
     f (Exponent a (Const 1)) = a
     f (Exponent (Const a) (Const b)) = Const $ a ^ b
     f (Fraction a (Const 1)) = a
+    f t@(Fraction (Const a) (Const b)) =
+      case gcd a b of
+        1 -> t
+        n -> simplify $ Fraction (Const $ a `div` n) (Const $ b `div` n)
     f (Product (Const 1) a) = a
     f (Product a (Const 1)) = a
     f (Sum a (Const 0)) = a
@@ -540,6 +544,7 @@ validate :: (Term -> Term) -> Term -> Term -> TestTree
 validate f input expected =
   testCase (toAscii input <> " = " <> toAscii expected) $ (toAscii . simplify $ f input) @?=(toAscii . simplify $ expected)
 
+validateAll :: TestName -> (Term -> Term) -> [(Term, Term)] -> TestTree
 validateAll name f = testGroup name . map (uncurry $ validate f)
 
 tests = testGroup "Axioms"
@@ -557,6 +562,8 @@ tests = testGroup "Axioms"
     , ("2*3+4", "10")
     , ("a^0", "1")
     , ("2^2", "4")
+    , ("4/2", "2")
+    , ("14/8", "7/4")
     ]
   , validateAll "distribute \"a\"" (distribute "a") $
       [ ("a*(b+c)", "a*b+a*c")
@@ -572,6 +579,13 @@ tests = testGroup "Axioms"
       , ("a+a*b", "a*(1+b)")
       , ("a+b*a", "a*(1+b)")
       , ("b+c", "a*(b/a+c/a)")
+      ]
+    , testGroup "cancelTerm (exponents)" $
+      [ validate (cancelTerm "x^1") "x^2/x^1" "x"
+      , validate (cancelTerm "x") "x^2/x^1" "x"
+      , validate (cancelTerm "x") "x^2/x" "x"
+      , validate (cancelTerm "x") "x/x^1" "1"
+      , validate (cancelTerm "x") "(2*x)/x" "2"
       ]
   ]
 
