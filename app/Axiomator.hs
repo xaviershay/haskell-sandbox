@@ -225,28 +225,26 @@ allAxioms =
   , axiomFactorialConst
   ]
 
---data Crumb =
---  ??
---
---data Tree a = Node a [Tree a]
---data TreeTerm =
---  Sum
---  Const Integer
-
---undistribute :: Term -> Zipper -> Zipper
---
---undistribute "a" "ab+ac" "a*(b+c)"
---undistribute "a" "ab+ac" "a*(ab/a+ac/a)"
---
---cancelTerm "a" "ab/a" "b/1" -- "b"
-
 p = parseUnsafe
+ps = putStrLn . toAscii
 
--- distribute "(2*a)(b+c)"
+simplify t = walk f t
+  where
+    f (Sum (Const a) (Const b)) = (Const $ a + b)
+    f (Product (Const a) (Const b)) = (Const $ a * b)
+    f (Exponent a (Const 0)) = (Const 1)
+    f (Exponent a (Const 1)) = a
+    f (Fraction a (Const 1)) = a
+    f (Product (Const 1) a) = a
+    f (Product a (Const 1)) = a
+    f (Sum a (Const 0)) = a
+    f (Sum (Const 0) a) = a
+    f x = x
+
 distribute t (Product a (Sum b c)) =
-  let x = unidentity . cancelTerm t $ Fraction a t in
+  let x = cancelTerm t $ Fraction a t in
 
-  unidentity . Product x $
+  Product x $
     Sum
       (Product t b)
       (Product t c)
@@ -254,10 +252,21 @@ distribute t (Product a (Sum b c)) =
 undistribute t (Sum a b) =
   Product t $
     Sum
-      (unidentity . cancelTerm t $ Fraction a t)
-      (unidentity . cancelTerm t $ Fraction b t)
+      (cancelTerm t $ Fraction a t)
+      (cancelTerm t $ Fraction b t)
 
 cancelTerm :: Term -> Term -> Term
+cancelTerm (Exponent x y) f@(Fraction (Exponent a b) (Exponent c d)) =
+  case Fraction <$> numerator <*> denominator of
+    Just x -> x
+    Nothing -> f
+  where
+    numerator = if x == a then Just (Exponent a (Sum b (Product (Const (-1)) y))) else Nothing
+    denominator = if x == c then Just (Exponent c (Sum d (Product (Const (-1)) y))) else Nothing
+
+cancelTerm x f@(Fraction (Exponent{}) (Exponent{})) = cancelTerm (Exponent x (Const 1)) f
+cancelTerm x (Fraction lhs@(Exponent{}) rhs) = cancelTerm x (Fraction lhs (Exponent rhs (Const 1)))
+cancelTerm x (Fraction lhs rhs@(Exponent{})) = cancelTerm x (Fraction (Exponent lhs (Const 1)) rhs)
 cancelTerm t f@(Fraction (Product a b) (Product c d)) =
     case Fraction <$> numerator <*> denominator of
       Just x -> x
@@ -276,12 +285,6 @@ cancelTerm t f@(Fraction (Product a b) (Product c d)) =
 cancelTerm t (Fraction l@(Product{}) r) = cancelTerm t (Fraction l (Product r (Const 1)))
 cancelTerm t (Fraction l r@(Product{})) = cancelTerm t (Fraction l (Product (Const 1) r))
 cancelTerm t (Fraction l r) = cancelTerm t (Fraction (Product (Const 1) l) (Product (Const 1) r))
-
-unidentity :: Term -> Term
-unidentity (Fraction a (Const 1)) = a
-unidentity (Product (Const 1) a) = a
-unidentity (Product a (Const 1)) = a
-unidentity x = x
 
 data Crumb =
     LeftCrumb Term
@@ -322,7 +325,7 @@ filterZip f z@(t, cs) = do
 isConst (Const t) = True
 isConst _ = False
 
-testF = head $ filterZip isConst (Sum (Const 3) (Sum (Const 1) (Const 4)), [])  
+testF = head $ filterZip isConst (Sum (Const 3) (Sum (Const 1) (Const 4)), [])
 
 data Term =
   Void |
