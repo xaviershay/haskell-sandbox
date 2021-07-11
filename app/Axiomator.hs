@@ -387,12 +387,12 @@ matcherApplies (SeriesMatcher v) (Series v' _ _) = v == v'
 matcherApplies AllMatcher _ = True
 matcherApplies _ _ = False
 
-toUnicode (Const a) = show a
-toUnicode (Var a) = a
-toUnicode (Sum a b) = "(" <> toUnicode a <> " + " <> toUnicode b <> ")"
-toUnicode (Product a b) = "(" <> toUnicode a <> "⋅" <> toUnicode b <> ")"
+toUnicode (Const a)      = show a
+toUnicode (Var a)        = a
+toUnicode (Sum a b)      = "(" <> toUnicode a <> " + " <> toUnicode b <> ")"
+toUnicode (Product a b)  = "(" <> toUnicode a <> "⋅" <> toUnicode b <> ")"
 toUnicode (Series v i t) = "Σ[" <> v <> " = " <> toUnicode i <> "](" <> toUnicode t <> ")"
-toUnicode (Factorial t) = "(" <> toUnicode t <> ")!"
+toUnicode (Factorial t)  = "(" <> toUnicode t <> ")!"
 toUnicode (Fraction a b) = "(" <> toUnicode a <> "/" <> toUnicode b <> ")"
 toUnicode (Exponent a b) = toUnicode a <> "^" <> toUnicode b
 
