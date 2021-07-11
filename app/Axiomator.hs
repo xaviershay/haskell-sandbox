@@ -403,7 +403,12 @@ maybeBrackets parent child = let inner = toUnicode child in
 toUnicode (Const a)        = show a
 toUnicode (Var a)          = a
 toUnicode t@(Sum a b)      = maybeBrackets t a <> " + " <> maybeBrackets t b
-toUnicode t@(Product a b)  = maybeBrackets t a <> "⋅" <> maybeBrackets t b
+toUnicode t@(Product a b)  =
+  let operator = case (a, b) of
+                   (_, Const{}) -> "⋅"
+                   _            -> ""
+  in maybeBrackets t a <> operator  <> maybeBrackets t b
+
 toUnicode t@(Factorial a)  = maybeBrackets t a <> "!"
 toUnicode t@(Fraction a b) = maybeBrackets t a <> "/" <> maybeBrackets t b
 toUnicode t@(Exponent a b) = maybeBrackets t a <> "^" <> maybeBrackets t b
@@ -566,16 +571,16 @@ toAsciiTests =
   testGroup "toAscii (bracket reduction)" . map f $
     [ ("a+b", "a + b")
     , ("a+b+c", "a + b + c")
-    , ("a+(b*c)", "a + b*c")
-    , ("a*b+c)", "a*b + c")
-    , ("(a+b)*c", "(a + b)*c")
-    , ("a*b*c", "a*b*c")
+    , ("a+(bc)", "a + bc")
+    , ("a*b+c)", "ab + c")
+    , ("(a+b)*c", "(a + b)c")
+    , ("a*b*c", "abc")
     , ("a+b/c", "a + b/c")
     , ("(a+b)/c", "(a + b)/c")
     , ("a^2", "a^2")
-    , ("(a+b)^(c*d)", "(a + b)^(c*d)")
-    , ("2*a!", "2*a!")
-    , ("(2*a)!", "(2*a)!")
+    , ("(a+b)^(c*d)", "(a + b)^(cd)")
+    , ("2*a!", "2a!")
+    , ("(2*a)!", "(2a)!")
     ]
 
   where
@@ -602,18 +607,18 @@ tests = testGroup "Axioms"
     , ("14/8", "7/4")
     ]
   , validateAll "distribute \"a\"" (simplify . distribute "a") $
-      [ ("a*(b+c)", "a*b+a*c")
-      , ("(2*a)*(b+c)", "2*(a*b+a*c)")
+      [ ("a(b+c)", "ab+ac")
+      , ("2a(b+c)", "2(ab+ac)")
       ]
   , validateAll "undistribute \"a\"" (simplify . undistribute "a")
-      [ ("a*b+a*c", "a*(b+c)")
-      , ("b*a+a*c", "a*(b+c)")
-      , ("a*b+c*a", "a*(b+c)")
-      , ("b*a+c*a", "a*(b+c)")
-      , ("a*b+a", "a*(b+1)")
-      , ("b*a+a", "a*(b+1)")
-      , ("a+a*b", "a*(1+b)")
-      , ("a+b*a", "a*(1+b)")
+      [ ("ab+ac", "a(b+c)")
+      , ("ba+ac", "a(b+c)")
+      , ("ab+ca", "a(b+c)")
+      , ("ba+ca", "a(b+c)")
+      , ("ab+a", "a(b+1)")
+      , ("ba+a", "a(b+1)")
+      , ("a+ab", "a(1+b)")
+      , ("a+ba", "a(1+b)")
       , ("b+c", "a*(b/a+c/a)")
       ]
     , testGroup "cancelTerm (exponents)"
@@ -621,7 +626,7 @@ tests = testGroup "Axioms"
       , validate (simplify . cancelTerm "x") "x^2/x^1" "x"
       , validate (simplify . cancelTerm "x") "x^2/x" "x"
       , validate (simplify . cancelTerm "x") "x/x^1" "1"
-      , validate (simplify . cancelTerm "x") "(2*x)/x" "2"
+      , validate (simplify . cancelTerm "x") "2x/x" "2"
       ]
   ]
 
