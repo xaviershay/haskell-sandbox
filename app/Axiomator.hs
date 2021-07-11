@@ -6,6 +6,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 
 module Main where
+import Control.Monad (mfilter)
 import Data.String (IsString(..))
 import Debug.Trace (trace, traceM)
 import Data.List
@@ -31,6 +32,9 @@ import Test.Tasty.HUnit
 --  AssociateSumLR |
 --  AssociateSumRL |
 --  CombineConst
+
+-- TODO: replace with Text package
+replace a b = map $ maybe b id . mfilter (/= a) . Just
 
 data Axiom = Axiom {
   description :: String,
@@ -383,14 +387,17 @@ matcherApplies (SeriesMatcher v) (Series v' _ _) = v == v'
 matcherApplies AllMatcher _ = True
 matcherApplies _ _ = False
 
-toAscii (Const a) = show a
-toAscii (Var a) = a
-toAscii (Sum a b) = "(" <> toAscii a <> " + " <> toAscii b <> ")"
-toAscii (Product a b) = "(" <> toAscii a <> "⋅" <> toAscii b <> ")"
-toAscii (Series v i t) = "Σ[" <> v <> " = " <> toAscii i <> "](" <> toAscii t <> ")"
-toAscii (Factorial t) = "(" <> toAscii t <> ")!"
-toAscii (Fraction a b) = "(" <> toAscii a <> "/" <> toAscii b <> ")"
-toAscii (Exponent a b) = toAscii a <> "^" <> toAscii b
+toUnicode (Const a) = show a
+toUnicode (Var a) = a
+toUnicode (Sum a b) = "(" <> toUnicode a <> " + " <> toUnicode b <> ")"
+toUnicode (Product a b) = "(" <> toUnicode a <> "⋅" <> toUnicode b <> ")"
+toUnicode (Series v i t) = "Σ[" <> v <> " = " <> toUnicode i <> "](" <> toUnicode t <> ")"
+toUnicode (Factorial t) = "(" <> toUnicode t <> ")!"
+toUnicode (Fraction a b) = "(" <> toUnicode a <> "/" <> toUnicode b <> ")"
+toUnicode (Exponent a b) = toUnicode a <> "^" <> toUnicode b
+
+toAscii :: Term -> String
+toAscii = replace 'Σ' 'S' . replace '⋅' '*' . toUnicode
 
 data Env = Env Term deriving (Show)
 
@@ -542,7 +549,7 @@ main = defaultMain tests
 
 validate :: (Term -> Term) -> Term -> Term -> TestTree
 validate f input expected =
-  testCase (toAscii input <> " = " <> toAscii expected) $ (toAscii . simplify $ f input) @?=(toAscii . simplify $ expected)
+  testCase (toUnicode input <> " = " <> toUnicode expected) $ (toAscii $ f input) @?=(toAscii $ expected)
 
 validateAll :: TestName -> (Term -> Term) -> [(Term, Term)] -> TestTree
 validateAll name f = testGroup name . map (uncurry $ validate f)
@@ -565,11 +572,11 @@ tests = testGroup "Axioms"
     , ("4/2", "2")
     , ("14/8", "7/4")
     ]
-  , validateAll "distribute \"a\"" (distribute "a") $
+  , validateAll "distribute \"a\"" (simplify . distribute "a") $
       [ ("a*(b+c)", "a*b+a*c")
       , ("(2*a)*(b+c)", "2*(a*b+a*c)")
       ]
-  , validateAll "undistribute \"a\"" (undistribute "a")
+  , validateAll "undistribute \"a\"" (simplify . undistribute "a")
       [ ("a*b+a*c", "a*(b+c)")
       , ("b*a+a*c", "a*(b+c)")
       , ("a*b+c*a", "a*(b+c)")
@@ -580,12 +587,12 @@ tests = testGroup "Axioms"
       , ("a+b*a", "a*(1+b)")
       , ("b+c", "a*(b/a+c/a)")
       ]
-    , testGroup "cancelTerm (exponents)" $
-      [ validate (cancelTerm "x^1") "x^2/x^1" "x"
-      , validate (cancelTerm "x") "x^2/x^1" "x"
-      , validate (cancelTerm "x") "x^2/x" "x"
-      , validate (cancelTerm "x") "x/x^1" "1"
-      , validate (cancelTerm "x") "(2*x)/x" "2"
+    , testGroup "cancelTerm (exponents)"
+      [ validate (simplify . cancelTerm "x^1") "x^2/x^1" "x"
+      , validate (simplify . cancelTerm "x") "x^2/x^1" "x"
+      , validate (simplify . cancelTerm "x") "x^2/x" "x"
+      , validate (simplify . cancelTerm "x") "x/x^1" "1"
+      , validate (simplify . cancelTerm "x") "(2*x)/x" "2"
       ]
   ]
 
