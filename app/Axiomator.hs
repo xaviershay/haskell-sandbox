@@ -387,14 +387,28 @@ matcherApplies (SeriesMatcher v) (Series v' _ _) = v == v'
 matcherApplies AllMatcher _ = True
 matcherApplies _ _ = False
 
-toUnicode (Const a)      = show a
-toUnicode (Var a)        = a
-toUnicode (Sum a b)      = "(" <> toUnicode a <> " + " <> toUnicode b <> ")"
-toUnicode (Product a b)  = "(" <> toUnicode a <> "⋅" <> toUnicode b <> ")"
-toUnicode (Series v i t) = "Σ[" <> v <> " = " <> toUnicode i <> "](" <> toUnicode t <> ")"
-toUnicode (Factorial t)  = "(" <> toUnicode t <> ")!"
-toUnicode (Fraction a b) = "(" <> toUnicode a <> "/" <> toUnicode b <> ")"
-toUnicode (Exponent a b) = toUnicode a <> "^" <> toUnicode b
+precedence (Factorial{}) = 40
+precedence (Exponent{}) = 30
+precedence (Product{}) = 20
+precedence (Fraction{}) = 20
+precedence (Sum{}) = 10
+precedence _ = 99
+
+maybeBrackets parent child = let inner = toUnicode child in
+  if precedence child < precedence parent then
+    "(" <> inner <> ")"
+  else
+    inner
+
+toUnicode (Const a)        = show a
+toUnicode (Var a)          = a
+toUnicode t@(Sum a b)      = maybeBrackets t a <> " + " <> maybeBrackets t b
+toUnicode t@(Product a b)  = maybeBrackets t a <> "⋅" <> maybeBrackets t b
+toUnicode t@(Factorial a)  = maybeBrackets t a <> "!"
+toUnicode t@(Fraction a b) = maybeBrackets t a <> "/" <> maybeBrackets t b
+toUnicode t@(Exponent a b) = maybeBrackets t a <> "^" <> maybeBrackets t b
+toUnicode (Series v i t)   =
+  "Σ[" <> v <> " = " <> toUnicode i <> "](" <> toUnicode t <> ")"
 
 toAscii :: Term -> String
 toAscii = replace 'Σ' 'S' . replace '⋅' '*' . toUnicode
@@ -554,8 +568,29 @@ validate f input expected =
 validateAll :: TestName -> (Term -> Term) -> [(Term, Term)] -> TestTree
 validateAll name f = testGroup name . map (uncurry $ validate f)
 
+toAsciiTests =
+  testGroup "toAscii (bracket reduction)" . map f $
+    [ ("a+b", "a + b")
+    , ("a+b+c", "a + b + c")
+    , ("a+(b*c)", "a + b*c")
+    , ("a*b+c)", "a*b + c")
+    , ("(a+b)*c", "(a + b)*c")
+    , ("a*b*c", "a*b*c")
+    , ("a+b/c", "a + b/c")
+    , ("(a+b)/c", "(a + b)/c")
+    , ("a^2", "a^2")
+    , ("(a+b)^(c*d)", "(a + b)^(c*d)")
+    , ("2*a!", "2*a!")
+    , ("(2*a)!", "(2*a)!")
+    ]
+
+  where
+    f :: (String, String) -> TestTree
+    f (input, expected) = testCase (input <> " = " <> expected) $ expected @=? toAscii (parseUnsafe input)
+
 tests = testGroup "Axioms"
-  [ validateAll "simplify" simplify
+  [ toAsciiTests
+  , validateAll "simplify" simplify
     [ ("a+0", "a")
     , ("0+a", "a")
     , ("a*1", "a")
