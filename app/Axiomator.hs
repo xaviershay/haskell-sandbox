@@ -462,22 +462,13 @@ apply m axiom = do
 matchSeries (Series{}) = True
 matchSeries _ = False
 
-
 parens = between (char '(') (char ')')
 
-integer = rd <$> (plus <|> minus <|> number)
-    where rd     = read :: String -> Integer
-          plus   = char '+' *> number
-          minus  = (:) <$> char '-' <*> number
-          number = many1 digit
-
-symbol = many1 (oneOf ['a'..'z'])
-
-termExpr = parens expr <|> Const <$> integer <|> Var <$> symbol
+termExpr = parens expr <|> Const . read <$> many1 (oneOf ['0'..'9']) <|> Var . replicate 1 <$> oneOf ['a'..'z']
 
 table = [ [postfix "!" Factorial, series "S" ]
         , [binary "^" Exponent AssocLeft ]
-        , [binary "*" Product AssocLeft, binary "/" Fraction AssocLeft ]
+        , [binary "*" Product AssocLeft, binary "/" Fraction AssocLeft, binary "" Product AssocLeft]
         , [binary "+" Sum AssocLeft ]
         ]
 
@@ -485,11 +476,11 @@ series op = Prefix $
   do
     string op
     char '['
-    v <- symbol
+    v <- replicate 1 <$> oneOf ['a'..'z']
     many (char ' ')
     char '='
     many (char ' ')
-    i <- termExpr
+    i <- expr
     char ']'
 
     return $ Series v i
@@ -499,7 +490,10 @@ binary name fun assoc = Infix (do { string name; return fun}) assoc
 
 expr = buildExpressionParser table termExpr
 
-parseUnsafe input = let Right x = parse expr input input in x
+parseUnsafe input =
+  case parse expr input input of
+    Right x -> x
+    Left x -> error $ "error parsing: " <> input
 
 highlightTerms m = do
   Env t <- get
