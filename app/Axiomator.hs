@@ -308,27 +308,27 @@ type Crumbs = [Crumb]
 type Zipper = (Term, Crumbs)
 
 goLeft :: Zipper -> Zipper
-goLeft (Sum l r, cs) = (l, LeftCrumb (Sum Void r):cs)
-goLeft (Product l r, cs) = (l, LeftCrumb (Product Void r):cs)
-goLeft (Fraction l r, cs) = (l, LeftCrumb (Fraction Void r):cs)
-goLeft (Exponent l r, cs) = (l, LeftCrumb (Exponent Void r):cs)
-goLeft (t, cs) = (Void, cs)
+goLeft (Sum l r, cs) = (l, LeftCrumb (Sum Hole r):cs)
+goLeft (Product l r, cs) = (l, LeftCrumb (Product Hole r):cs)
+goLeft (Fraction l r, cs) = (l, LeftCrumb (Fraction Hole r):cs)
+goLeft (Exponent l r, cs) = (l, LeftCrumb (Exponent Hole r):cs)
+goLeft (t, cs) = (Hole, cs)
 
 goRight :: Zipper -> Zipper
-goRight (Sum l r, cs) = (r, RightCrumb (Sum l Void):cs)
-goRight (Product l r, cs) = (r, RightCrumb (Product l Void):cs)
-goRight (Fraction l r, cs) = (r, RightCrumb (Fraction l Void):cs)
-goRight (Exponent l r, cs) = (r, RightCrumb (Exponent l Void):cs)
-goRight (Series v i t, cs) = (t, RightCrumb (Series v i Void):cs)
-goRight (Factorial t, cs) = (t, RightCrumb (Factorial Void):cs)
-goRight (t, cs) = (Void, cs)
+goRight (Sum l r, cs) = (r, RightCrumb (Sum l Hole):cs)
+goRight (Product l r, cs) = (r, RightCrumb (Product l Hole):cs)
+goRight (Fraction l r, cs) = (r, RightCrumb (Fraction l Hole):cs)
+goRight (Exponent l r, cs) = (r, RightCrumb (Exponent l Hole):cs)
+goRight (Series v i t, cs) = (t, RightCrumb (Series v i Hole):cs)
+goRight (Factorial t, cs) = (t, RightCrumb (Factorial Hole):cs)
+goRight (t, cs) = (Hole, cs)
 
 goUp :: Zipper -> Zipper
 goUp (t, LeftCrumb (Sum _ r):cs) = (Sum t r, cs)
 goUp (t, RightCrumb (Sum l _):cs) = (Sum l t, cs)
 
 filterZip :: (Term -> Bool) -> Zipper -> [Zipper]
-filterZip f (Void, _) = []
+filterZip f (Hole, _) = []
 filterZip f z@(t, cs) = do
   let currentNode = if f t then [(t, cs)] else []
       lhs = filterZip f (goLeft z)
@@ -341,7 +341,7 @@ isConst _ = False
 testF = head $ filterZip isConst (Sum (Const 3) (Sum (Const 1) (Const 4)), [])
 
 data Term =
-  Void |
+  Hole |
   Const Integer |
   Sum Term Term |
   Product Term Term |
@@ -402,6 +402,7 @@ maybeBrackets parent child = let inner = toUnicode child in
   else
     inner
 
+toUnicode Hole             = "_"
 toUnicode (Const a)        = show a
 toUnicode (Var a)          = a
 toUnicode t@(Sum a b)      = maybeBrackets t a <> " + " <> maybeBrackets t b
@@ -487,7 +488,7 @@ parens = between (char '(' <* whiteSpace) (char ')')
 termExpr = (parens expr
              <|> Const . read <$> many1 (oneOf ['0'..'9'])
              <|> Var . replicate 1 <$> oneOf ['a'..'z']
-             <|> (char '_' >> return Void)
+             <|> (char '_' >> return Hole)
            ) <* whiteSpace
 
 table = [ [postfix "!" Factorial, series "S" ]
