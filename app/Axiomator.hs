@@ -20,6 +20,8 @@ import Control.Monad (msum, forM_)
 
 import Text.Parsec hiding (State(..))
 import Text.Parsec.Expr
+import qualified Text.Parsec.Token    as Tok
+import qualified Text.Parsec.Language as Tok
 
 import Control.Monad.Freer (Eff, Members, Member, run, runM)
 import Control.Monad.Freer.Error (Error, throwError, runError)
@@ -467,9 +469,26 @@ apply m axiom = do
 matchSeries (Series{}) = True
 matchSeries _ = False
 
-parens = between (char '(') (char ')')
 
-termExpr = parens expr <|> Const . read <$> many1 (oneOf ['0'..'9']) <|> Var . replicate 1 <$> oneOf ['a'..'z']
+lexer :: Tok.TokenParser ()
+lexer = Tok.makeTokenParser style
+  where
+    style = Tok.emptyDef
+      { Tok.reservedOpNames = ["+", "!", "^", "/", "*"]
+      , Tok.reservedNames   = []
+      , Tok.identStart      = letter
+      }
+
+reservedOp = Tok.reservedOp lexer
+whiteSpace = Tok.whiteSpace lexer
+
+parens = between (char '(' <* whiteSpace) (char ')')
+
+termExpr = (parens expr
+             <|> Const . read <$> many1 (oneOf ['0'..'9'])
+             <|> Var . replicate 1 <$> oneOf ['a'..'z']
+             <|> (char '_' >> return Void)
+           ) <* whiteSpace
 
 table = [ [postfix "!" Factorial, series "S" ]
         , [binary "^" Exponent AssocLeft ]
@@ -482,18 +501,18 @@ series op = Prefix $
     string op
     char '['
     v <- replicate 1 <$> oneOf ['a'..'z']
-    many (char ' ')
+    whiteSpace
     char '='
-    many (char ' ')
+    whiteSpace
     i <- expr
     char ']'
 
     return $ Series v i
 
-postfix name fun = Postfix (do { string name; return fun })
-binary name fun assoc = Infix (do { string name; return fun}) assoc
+postfix name fun = Postfix (do { reservedOp name; return fun })
+binary name fun assoc = Infix (do { reservedOp name; return fun}) assoc
 
-expr = buildExpressionParser table termExpr
+expr = buildExpressionParser table (whiteSpace *> termExpr)
 
 parseUnsafe input =
   case parse expr input input of
@@ -591,8 +610,8 @@ toAsciiTests =
 tests = testGroup "Axioms"
   [ toAsciiTests
   , validateAll "simplify" simplify
-    [ ("a+0", "a")
-    , ("0+a", "a")
+    [ ("a + 0", "a")
+    , ("0 + a", "a")
     , ("a*1", "a")
     , ("1*a", "a")
     , ("a/1", "a")
