@@ -580,6 +580,21 @@ runProcess t m = do
 main = defaultMain tests
 --main = putStrLn $ show testF
 
+--solution = do
+--  initial "(sin(x+h)-sin(x))/h"
+--
+--  focus "sin(x+h)" $ apply (axiomIdentity "sin(a+b)" "sin(a)cos(b) + sin(b)cos(a)")
+--  focus "_-sin(x)" $ apply axiomCommuteSum
+--  focus "sin(x)*_-sin(x)" $ apply axiomDistributeSum
+--  focus "_/h" $ apply axiomDistributeProduct
+--  focus "lim[h->_](_+_)" $ apply axiomDistributeLimit
+--  focus "lim[h->_](sin(x)_)" apply (axiomFactor "sin(x)")
+--  focus "lim[h->_](cos(x)_)" apply (axiomFactor "cos(x)")
+--  focus "lim[h->_](sin(h)_)" apply (axiomIdentity "lim[a->0](sin(a)/a)" "1")
+--  focus "lim[h->_](cos(h)_)" apply (axiomIdentity "lim[a->0]((cos(a)-1)/a)" "0")
+--  apply axiomZero
+--  apply axiomIdentity
+
 validate :: (Term -> Term) -> Term -> Term -> TestTree
 validate f input expected =
   testCase (toUnicode input <> " = " <> toUnicode expected) $ (toAscii $ f input) @?=(toAscii $ expected)
