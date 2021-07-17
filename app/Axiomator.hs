@@ -326,6 +326,12 @@ goRight (t, cs) = (Hole, cs)
 goUp :: Zipper -> Zipper
 goUp (t, LeftCrumb (Sum _ r):cs) = (Sum t r, cs)
 goUp (t, RightCrumb (Sum l _):cs) = (Sum l t, cs)
+goUp (t, LeftCrumb (Product _ r):cs) = (Product t r, cs)
+goUp (t, RightCrumb (Product l _):cs) = (Product l t, cs)
+
+goRoot :: Zipper -> Term
+goRoot (t, []) = t
+goRoot z = goRoot . goUp $ z
 
 filterZip :: (Term -> Bool) -> Zipper -> [Zipper]
 filterZip f (Hole, _) = []
@@ -339,6 +345,29 @@ isConst (Const t) = True
 isConst _ = False
 
 testF = head $ filterZip isConst (Sum (Const 3) (Sum (Const 1) (Const 4)), [])
+
+
+locate :: Term -> Term -> Maybe Zipper
+locate needle haystack = locate' needle (haystack, [])
+
+locate' :: Term -> Zipper -> Maybe Zipper
+locate' Hole z = Just z
+locate' _ (Hole, _) = Nothing
+locate' a z@(b, _) | a `termEqual` b = Just z
+locate' a z = msum [locate' a (goLeft z), locate' a (goRight z)]
+
+termEqual :: Term -> Term -> Bool
+termEqual Hole _ = True
+termEqual _ Hole = True
+termEqual (Sum a b) (Sum c d) = a `termEqual` c && b `termEqual` d
+termEqual (Product a b) (Product c d) = a `termEqual` c && b `termEqual` d
+termEqual (Fraction a b) (Fraction c d) = a `termEqual` c && b `termEqual` d
+termEqual (Exponent a b) (Exponent c d) = a `termEqual` c && b `termEqual` d
+termEqual (Series l1 a b) (Series l2 c d) = l1 == l2 && a `termEqual` c && b `termEqual` d
+termEqual (Var a) (Var c) = a == c
+termEqual (Const a) (Const c) = a == c
+termEqual (Factorial a) (Factorial c) = a == c
+termEqual _ _ = False
 
 data Term =
   Hole |
@@ -430,18 +459,30 @@ ignoreError :: Either a a -> a
 ignoreError (Left x) = x
 ignoreError (Right x) = x
 
-apply :: AppEff effs => Matcher -> Axiom -> Eff effs ()
-apply m axiom = do
+apply :: AppEff effs => Axiom -> Eff effs ()
+apply axiom = do
+  Env t <- get
+
+  case (implementation axiom) t of
+    Right t' -> do
+      tell [(t', axiom)]
+      put (Env t')
+    Left t' -> do
+      error $ "couldn't apply " <> description axiom <> " to " <> toUnicode t' <> " (full term is " <> toUnicode t <> ")"
+
+applyOld :: AppEff effs => Matcher -> Axiom -> Eff effs ()
+applyOld m axiom = do
   (Env t) <- get
 
   -- TODO: Handle error
   case walkMatched m (implementation axiom) t of
     Right t' -> do
-      let t'' = walk (
-                  ignoreError . implementation axiomSumConst .
-                  ignoreError . implementation axiomMultiplyConst .
-                  ignoreError . implementation axiomNullExponent
-                ) t'
+      let t'' =  t'
+    --  walk (
+    --              ignoreError . implementation axiomSumConst .
+    --              ignoreError . implementation axiomMultiplyConst .
+    --              ignoreError . implementation axiomNullExponent
+    --            ) t'
       tell [(t'', axiom)]
 
       put (Env t'')
@@ -535,8 +576,8 @@ e_to t = (Series "k" (Const 0) (Fraction (Exponent t (Var "k")) (Factorial (Var 
 --cos_x = (Series "m" (Const 0) (Product (Exponent (Const (-1)) (Var "m")) (Fraction (Exponent (Var "x") (Product (Const 2) (Var "m"))) (Factorial (Product (Const 2) (Var "m"))))))
 
 cos_x = parseUnsafe "S[m=0]((-1)^m*(x^(2*m))/(2*m)!)"
-body = runProcess (e_to cos_x) $ do
-  apply (SeriesMatcher "m") axiomStepSeries
+--body = runProcess (e_to cos_x) $ do
+--  apply (SeriesMatcher "m") axiomStepSeries
 --  --apply (SeriesMatcher "k") axiomStepSeries
 --  --apply AllMatcher axiomFactorialConst
 --  --apply AllMatcher axiomIdentityProduct
@@ -563,6 +604,35 @@ printAxioms axioms = do
     putStr " = "
     putStrLn $ toAscii rhs
 
+initial :: AppEff effs => Term -> Eff effs ()
+initial t = put (Env t)
+
+focus :: AppEff effs => Term -> Eff effs () -> Eff effs ()
+focus t m = do
+  Env oldT <- get
+
+  case locate t oldT of
+    Just (t', cs) -> do
+      put . Env $ t'
+      m
+      Env newT <- get
+
+      put . Env $ goRoot (newT, cs)
+    Nothing -> error $ "Could not focus: " <> show t
+
+runSolution :: Eff '[ Writer Log, State Env] a -> IO ()
+runSolution m = do
+  let (_, log) = runApp (Env "_") m
+  let usedAxioms = nub (map snd log)
+  printAxioms usedAxioms
+  putStrLn ""
+
+  let paddingT = maximum $ map (length . toAscii . fst) log
+  forM_ log $ \(t, axiom) -> do
+    putStr (toAscii t)
+    putStr $ replicate (paddingT - length (toAscii t)) ' '
+    putStrLn $ " ; " <> description axiom
+
 runProcess t m = do
   let (_, log) = runApp (Env t) m
   let usedAxioms = nub (map snd log)
@@ -577,9 +647,13 @@ runProcess t m = do
     putStrLn $ " ; " <> description axiom
 
 --main = body
-main = defaultMain tests
+--main = defaultMain tests
+main = runSolution solution
 --main = putStrLn $ show testF
 
+solution = do
+  initial "x(y+z)"
+  focus "y+_" $ apply axiomCommuteSum
 --solution = do
 --  initial "(sin(x+h)-sin(x))/h"
 --
