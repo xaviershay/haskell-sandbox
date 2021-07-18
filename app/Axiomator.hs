@@ -32,7 +32,7 @@ import Test.Tasty.HUnit
 
 data Term1 = Factorial | Negate | Function String
   deriving (Show, Eq)
-data Term2 = Sum | Product | Fraction | Exponent | Series String
+data Term2 = Sum | Product | Fraction | Exponent | Series String | Limit String
   deriving (Show, Eq)
 
 data Term =
@@ -57,7 +57,6 @@ allowedFunctionNames =
   , "tan"
   , "f"
   , "g"
-  , "h"
   ]
 
 -- TODO: replace with Text package
@@ -406,9 +405,12 @@ toUnicode t@(Op1 Negate a) = "-" <> maybeBrackets t a
 toUnicode t@(Op1 (Function name) a) = name <> "(" <> toUnicode a <> ")"
 toUnicode (Op2 (Series v) i t)   =
   "Σ[" <> v <> " = " <> toUnicode i <> "](" <> toUnicode t <> ")"
+toUnicode (Op2 (Limit v) i t)   =
+  "lim[" <> v <> " → " <> toUnicode i <> "](" <> toUnicode t <> ")"
 
+-- TODO: Use -> for arrow
 toAscii :: Term -> String
-toAscii = replace 'Σ' 'S' . replace '⋅' '*' . toUnicode
+toAscii = replace 'Σ' 'S' . replace '⋅' '*' . replace '→' '>' . toUnicode
 
 data Env = Env Term deriving (Show)
 
@@ -450,13 +452,14 @@ termExpr = (parens expr
              <|> (char '_' >> return Hole)
            ) <* whiteSpace
 
-table = [ [postfix "!" (Op1 Factorial), series "S", function, prefix "-" (Op1 Negate) ]
+table = [ [postfix "!" (Op1 Factorial), series "S", limit "lim", functionExpr, prefix "-" (Op1 Negate) ]
         , [binary "^" (Op2 Exponent) AssocLeft ]
         , [binary "*" (Op2 Product) AssocLeft, binary "/" (Op2 Fraction) AssocLeft, binary "" (Op2 Product) AssocLeft]
         , [binary "+" (Op2 Sum) AssocLeft, binary "-" (\a b -> Op2 Sum a (Op1 Negate b)) AssocLeft ]
         ]
 
-function = Prefix . try $ do
+functionExpr :: Monad m => Operator String u m Term
+functionExpr = Prefix . try $ do
   name <- msum . map string $ allowedFunctionNames
   return $ Op1 (Function name)
 
@@ -472,6 +475,19 @@ series op = Prefix $
     char ']'
 
     return $ Op2 (Series v) i
+
+limit op = Prefix $
+  do
+    string op
+    char '['
+    v <- replicate 1 <$> oneOf ['a'..'z']
+    whiteSpace
+    string "->"
+    whiteSpace
+    i <- expr
+    char ']'
+
+    return $ Op2 (Limit v) i
 
 prefix name fun = Prefix (do { reservedOp name; return fun })
 postfix name fun = Postfix (do { reservedOp name; return fun })
@@ -635,6 +651,8 @@ tests = testGroup "Axioms"
     , ("-x*(-1)", "x")
     , ("-x/(-1)", "x")
     , ("sin(x)", "sin(x)")
+    , ("S[h=0](h)", "S[h=0](h)")
+    , ("lim[h->0](h)", "lim[h->0](h)")
     ]
   , validateAll "distribute \"a\"" (simplify . distribute "a") $
       [ ("a(b+c)", "ab+ac")
