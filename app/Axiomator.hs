@@ -30,7 +30,7 @@ import Control.Monad.Freer.Writer (Writer(..), tell, runWriter)
 import Test.Tasty
 import Test.Tasty.HUnit
 
-data Term1 = Factorial | Negate
+data Term1 = Factorial | Negate | Function String
   deriving (Show, Eq)
 data Term2 = Sum | Product | Fraction | Exponent | Series String
   deriving (Show, Eq)
@@ -50,6 +50,15 @@ data Crumb =
 
 type Crumbs = [Crumb]
 type Zipper = (Term, Crumbs)
+
+allowedFunctionNames =
+  [ "sin"
+  , "cos"
+  , "tan"
+  , "f"
+  , "g"
+  , "h"
+  ]
 
 -- TODO: replace with Text package
 replace a b = map $ maybe b id . mfilter (/= a) . Just
@@ -85,7 +94,7 @@ axiomAssociateSum = Axiom {
     f (Op2 Sum a (Op2 Sum b c)) = Right (Op2 Sum (Op2 Sum a b) c)
     f t = Left t
 
-axiomCommuteOp2 Product = Axiom {
+axiomCommuteProduct = Axiom {
   description = "Commutative law for multiplication",
   example = (Op2 Product (Var "a") (Var "b"), Op2 Product (Var "b") (Var "a")),
   implementation = f
@@ -94,7 +103,7 @@ axiomCommuteOp2 Product = Axiom {
     f (Op2 Product a b) = Right (Op2 Product b a)
     f t = Left t
 
-axiomAssociateOp2 Product = Axiom {
+axiomAssociateProduct = Axiom {
   description = "Associative law for multiplication",
   example = (
     Op2 Product (Var "a") (Op2 Product (Var "b") (Var "c")),
@@ -394,6 +403,7 @@ toUnicode t@(Op1 Factorial a)  = maybeBrackets t a <> "!"
 toUnicode t@(Op2 Fraction a b) = maybeBrackets t a <> "/" <> maybeBrackets t b
 toUnicode t@(Op2 Exponent a b) = maybeBrackets t a <> "^" <> maybeBrackets t b
 toUnicode t@(Op1 Negate a) = "-" <> maybeBrackets t a
+toUnicode t@(Op1 (Function name) a) = name <> "(" <> toUnicode a <> ")"
 toUnicode (Op2 (Series v) i t)   =
   "Σ[" <> v <> " = " <> toUnicode i <> "](" <> toUnicode t <> ")"
 
@@ -440,11 +450,15 @@ termExpr = (parens expr
              <|> (char '_' >> return Hole)
            ) <* whiteSpace
 
-table = [ [postfix "!" (Op1 Factorial), series "S", prefix "-" (Op1 Negate) ]
+table = [ [postfix "!" (Op1 Factorial), series "S", function, prefix "-" (Op1 Negate) ]
         , [binary "^" (Op2 Exponent) AssocLeft ]
         , [binary "*" (Op2 Product) AssocLeft, binary "/" (Op2 Fraction) AssocLeft, binary "" (Op2 Product) AssocLeft]
         , [binary "+" (Op2 Sum) AssocLeft, binary "-" (\a b -> Op2 Sum a (Op1 Negate b)) AssocLeft ]
         ]
+
+function = Prefix . try $ do
+  name <- msum . map string $ allowedFunctionNames
+  return $ Op1 (Function name)
 
 series op = Prefix $
   do
@@ -620,6 +634,7 @@ tests = testGroup "Axioms"
     , ("-1*(-x)", "x")
     , ("-x*(-1)", "x")
     , ("-x/(-1)", "x")
+    , ("sin(x)", "sin(x)")
     ]
   , validateAll "distribute \"a\"" (simplify . distribute "a") $
       [ ("a(b+c)", "ab+ac")
@@ -642,6 +657,10 @@ tests = testGroup "Axioms"
       , validate (simplify . cancelTerm "x") "x^2/x" "x"
       , validate (simplify . cancelTerm "x") "x/x^1" "1"
       , validate (simplify . cancelTerm "x") "2x/x" "2"
+      ]
+    , testGroup "random"
+      [ testCase "functions not parsed as products of variables" $
+          Left "sin(x)" @=? (implementation axiomCommuteProduct) "sin(x)"
       ]
   ]
 
