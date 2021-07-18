@@ -239,18 +239,22 @@ ps = putStrLn . toAscii
 simplify t = walk f t
   where
     f (Negate (Const a)) = Const (-a)
+    f (Negate (Negate a)) = a
     f (Sum (Const a) (Const b)) = Const $ a + b
     f (Product (Const a) (Const b)) = Const $ a * b
     f (Exponent a (Const 0)) = Const 1
     f (Exponent a (Const 1)) = a
     f (Exponent (Const a) (Const b)) = Const $ a ^ b
     f (Fraction a (Const 1)) = a
+    f (Fraction a (Const (-1))) = f $ Negate a
     f t@(Fraction (Const a) (Const b)) =
       case gcd a b of
         1 -> t
         n -> simplify $ Fraction (Const $ a `div` n) (Const $ b `div` n)
     f (Product (Const 1) a) = a
     f (Product a (Const 1)) = a
+    f (Product (Const (-1)) a) = f $ Negate a
+    f (Product a (Const (-1))) = f $ Negate a
     f (Sum a (Const 0)) = a
     f (Sum (Const 0) a) = a
     f x = x
@@ -728,6 +732,10 @@ tests = testGroup "Axioms"
     , ("3*(-2)", "-6")
     , ("-3*2", "-6")
     , ("-3*(-2)", "6")
+    , ("-(-1)", "1")
+    , ("-1*(-x)", "x")
+    , ("-x*(-1)", "x")
+    , ("-x/(-1)", "x")
     ]
   , validateAll "distribute \"a\"" (simplify . distribute "a") $
       [ ("a(b+c)", "ab+ac")
