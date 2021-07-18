@@ -238,6 +238,7 @@ ps = putStrLn . toAscii
 
 simplify t = walk f t
   where
+    f (Negate (Const a)) = Const (-a)
     f (Sum (Const a) (Const b)) = Const $ a + b
     f (Product (Const a) (Const b)) = Const $ a * b
     f (Exponent a (Const 0)) = Const 1
@@ -377,6 +378,7 @@ data Term =
   Var String |
   Series String Term Term |
   Factorial Term |
+  Negate Term |
   Fraction Term Term |
   Exponent Term Term
   deriving (Show, Eq)
@@ -393,6 +395,7 @@ walk f (Fraction a b) = f (Fraction (walk f a) (walk f b))
 walk f (Exponent a b) = f (Exponent (walk f a) (walk f b))
 walk f t@(Const{}) = f t
 walk f t@(Var{}) = f t
+walk f (Negate t) = f (Negate $ walk f t)
 
 data Matcher =
   RootMatcher
@@ -434,16 +437,19 @@ maybeBrackets parent child = let inner = toUnicode child in
 toUnicode Hole             = "_"
 toUnicode (Const a)        = show a
 toUnicode (Var a)          = a
+toUnicode t@(Sum a (Negate b))      = maybeBrackets t a <> " - " <> maybeBrackets t b
 toUnicode t@(Sum a b)      = maybeBrackets t a <> " + " <> maybeBrackets t b
 toUnicode t@(Product a b)  =
   let operator = case (a, b) of
                    (_, Const{}) -> "⋅"
+                   (_, Negate{}) -> "⋅"
                    _            -> ""
   in maybeBrackets t a <> operator  <> maybeBrackets t b
 
 toUnicode t@(Factorial a)  = maybeBrackets t a <> "!"
 toUnicode t@(Fraction a b) = maybeBrackets t a <> "/" <> maybeBrackets t b
 toUnicode t@(Exponent a b) = maybeBrackets t a <> "^" <> maybeBrackets t b
+toUnicode t@(Negate a) = "-" <> maybeBrackets t a
 toUnicode (Series v i t)   =
   "Σ[" <> v <> " = " <> toUnicode i <> "](" <> toUnicode t <> ")"
 
@@ -532,10 +538,10 @@ termExpr = (parens expr
              <|> (char '_' >> return Hole)
            ) <* whiteSpace
 
-table = [ [postfix "!" Factorial, series "S" ]
+table = [ [postfix "!" Factorial, series "S", prefix "-" Negate ]
         , [binary "^" Exponent AssocLeft ]
         , [binary "*" Product AssocLeft, binary "/" Fraction AssocLeft, binary "" Product AssocLeft]
-        , [binary "+" Sum AssocLeft ]
+        , [binary "+" Sum AssocLeft, binary "-" (\a b -> Sum a (Negate b)) AssocLeft ]
         ]
 
 series op = Prefix $
@@ -551,6 +557,7 @@ series op = Prefix $
 
     return $ Series v i
 
+prefix name fun = Prefix (do { reservedOp name; return fun })
 postfix name fun = Postfix (do { reservedOp name; return fun })
 binary name fun assoc = Infix (do { reservedOp name; return fun}) assoc
 
@@ -647,13 +654,13 @@ runProcess t m = do
     putStrLn $ " ; " <> description axiom
 
 --main = body
---main = defaultMain tests
-main = runSolution solution
+main = defaultMain tests
+--main = runSolution solution
 --main = putStrLn $ show testF
 
-solution = do
-  initial "x(y+z)"
-  focus "y+_" $ apply axiomCommuteSum
+--solution = do
+--  initial "x(y+z)"
+--  focus "y+_" $ apply axiomCommuteSum
 --solution = do
 --  initial "(sin(x+h)-sin(x))/h"
 --
@@ -715,6 +722,12 @@ tests = testGroup "Axioms"
     , ("2^2", "4")
     , ("4/2", "2")
     , ("14/8", "7/4")
+    , ("3-2", "1")
+    , ("-1+2", "1")
+    , ("-1-2", "-3")
+    , ("3*(-2)", "-6")
+    , ("-3*2", "-6")
+    , ("-3*(-2)", "6")
     ]
   , validateAll "distribute \"a\"" (simplify . distribute "a") $
       [ ("a(b+c)", "ab+ac")
