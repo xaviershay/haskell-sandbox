@@ -350,21 +350,20 @@ locate' a z = msum [locate' a (goLeft z), locate' a (goRight z)]
 termEqual :: Term -> Term -> Bool
 termEqual Hole _ = True
 termEqual _ Hole = True
+termEqual (Op1 op1 a) (Op1 op2 c) = op1 == op2 && a `termEqual` c
 termEqual (Op2 op1 a b) (Op2 op2 c d) = op1 == op2 && a `termEqual` c && b `termEqual` d
 termEqual (Var a) (Var c) = a == c
 termEqual (Const a) (Const c) = a == c
-termEqual (Op1 Factorial a) (Op1 Factorial c) = a == c
 termEqual _ _ = False
 
 instance IsString Term where
     fromString cs = parseUnsafe cs
 
 walk :: (Term -> Term) -> Term -> Term
+walk f (Op1 op t) = f (Op1 op (walk f t))
 walk f (Op2 op a b) = f (Op2 op (walk f a) (walk f b))
-walk f (Op1 Factorial t) = f (Op1 Factorial (walk f t))
 walk f t@(Const{}) = f t
 walk f t@(Var{}) = f t
-walk f (Op1 Negate t) = f (Op1 Negate $ walk f t)
 
 precedence (Op1 Factorial _) = 40
 precedence (Op2 Exponent _ _) = 30
