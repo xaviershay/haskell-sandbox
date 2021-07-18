@@ -6,6 +6,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 
 module Main where
+import Control.Arrow (first)
 import Control.Monad (mfilter)
 import Data.String (IsString(..))
 import Debug.Trace (trace, traceM)
@@ -73,6 +74,14 @@ instance Eq Axiom where
 
 instance Show Axiom where
   show (Axiom { description = d }) = d
+
+axiomSubstitute a b = Axiom {
+  description = "Replace expression with known alternative",
+  example = (a, b),
+  implementation = f
+}
+  where
+    f _ = Right b -- TODO: Check free variables
 
 axiomCommuteSum = Axiom {
   description = "Commutative law for addition",
@@ -529,21 +538,27 @@ printAxioms axioms = do
     putStr " = "
     putStrLn $ toAscii rhs
 
+type AllEffs = '[ Writer Log, State Env ]
+runApp :: Env -> Eff AllEffs a -> (Term, Log)
+runApp env m = do
+  let ((_, log), (Env t)) = run . runState env . runWriter $ m
+
+  (t, log)
+
 initial :: AppEff effs => Term -> Eff effs ()
 initial t = put (Env t)
 
-focus :: AppEff effs => Term -> Eff effs () -> Eff effs ()
+focus :: Term -> Eff AllEffs () -> Eff AllEffs ()
 focus t m = do
   Env oldT <- get
 
   case locate t oldT of
     Just (t', cs) -> do
-      put . Env $ t'
-      m
-      Env newT <- get
+      let (newT, log) = runApp (Env t') m
 
       put . Env $ goRoot (newT, cs)
-    Nothing -> error $ "Could not focus: " <> show t
+      tell $ map (first (\nt -> goRoot (nt, cs))) log
+    Nothing -> error $ "Could not focus:\n  " <> toUnicode t <> " in\n  " <> toUnicode oldT
 
 runSolution :: Eff '[ Writer Log, State Env] a -> IO ()
 runSolution m = do
@@ -572,19 +587,16 @@ runProcess t m = do
     putStrLn $ " ; " <> description axiom
 
 --main = body
-main = defaultMain tests
---main = runSolution solution
+-- main = defaultMain tests
+main = runSolution solution
 --main = putStrLn $ show testF
 
---solution = do
---  initial "x(y+z)"
---  focus "y+_" $ apply axiomCommuteSum
---solution = do
---  initial "lim[h->0]((sin(x+h)-sin(x))/h)"
---
---  focus "sin(x+h)" $ apply (axiomIdentity "sin(a+b)" "sin(a)cos(b) + sin(b)cos(a)")
---  focus "_-sin(x)" $ apply axiomCommuteSum
---  focus "sin(x)*_-sin(x)" $ apply axiomDistributeSum
+solution = do
+  initial "lim[h->0]((sin(x+h)-sin(x))/h)"
+
+  focus "sin(x+h)" $ apply (axiomSubstitute "sin(a+b)" "sin(a)cos(b) + sin(b)cos(a)")
+  focus "_-sin(x)" $ apply axiomCommuteSum
+  -- focus "sin(x)*_-sin(x)" $ apply axiomDistribute
 --  focus "_/h" $ apply axiomDistributeOp2 Product
 --  focus "lim[h->_](_+_)" $ apply axiomDistributeLimit
 --  focus "lim[h->_](sin(x)_)" apply (axiomFactor "sin(x)")
@@ -681,9 +693,3 @@ tests = testGroup "Axioms"
           Left "sin(x)" @=? (implementation axiomCommuteProduct) "sin(x)"
       ]
   ]
-
-runApp :: Env -> Eff '[ Writer Log, State Env] a -> (Term, Log)
-runApp env m = do
-  let ((_, log), (Env t)) = run . runState env . runWriter $ m
-
-  (t, log)
