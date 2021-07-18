@@ -56,7 +56,7 @@ axiomCommuteSum = Axiom {
   implementation = f
 }
   where
-    f (BinaryOp Sum a b) = Right (BinaryOp Sum b a)
+    f (Op2 Sum a b) = Right (Op2 Sum b a)
     f t = Left t
 
 axiomAssociateSum = Axiom {
@@ -65,30 +65,30 @@ axiomAssociateSum = Axiom {
   implementation = f
 }
   where
-    f (BinaryOp Sum (BinaryOp Sum a b) c) = Right (BinaryOp Sum a (BinaryOp Sum b c))
-    f (BinaryOp Sum a (BinaryOp Sum b c)) = Right (BinaryOp Sum (BinaryOp Sum a b) c)
+    f (Op2 Sum (Op2 Sum a b) c) = Right (Op2 Sum a (Op2 Sum b c))
+    f (Op2 Sum a (Op2 Sum b c)) = Right (Op2 Sum (Op2 Sum a b) c)
     f t = Left t
 
-axiomCommuteBinaryOp Product = Axiom {
+axiomCommuteOp2 Product = Axiom {
   description = "Commutative law for multiplication",
-  example = (BinaryOp Product (Var "a") (Var "b"), BinaryOp Product (Var "b") (Var "a")),
+  example = (Op2 Product (Var "a") (Var "b"), Op2 Product (Var "b") (Var "a")),
   implementation = f
 }
   where
-    f (BinaryOp Product a b) = Right (BinaryOp Product b a)
+    f (Op2 Product a b) = Right (Op2 Product b a)
     f t = Left t
 
-axiomAssociateBinaryOp Product = Axiom {
+axiomAssociateOp2 Product = Axiom {
   description = "Associative law for multiplication",
   example = (
-    BinaryOp Product (Var "a") (BinaryOp Product (Var "b") (Var "c")),
-    BinaryOp Product (BinaryOp Product (Var "a") (Var "b")) (Var "c")
+    Op2 Product (Var "a") (Op2 Product (Var "b") (Var "c")),
+    Op2 Product (Op2 Product (Var "a") (Var "b")) (Var "c")
   ),
   implementation = f
 }
   where
-    f (BinaryOp Product (BinaryOp Product a b) c) = Right (BinaryOp Product a (BinaryOp Product b c))
-    f (BinaryOp Product a (BinaryOp Product b c)) = Right (BinaryOp Product (BinaryOp Product a b) c)
+    f (Op2 Product (Op2 Product a b) c) = Right (Op2 Product a (Op2 Product b c))
+    f (Op2 Product a (Op2 Product b c)) = Right (Op2 Product (Op2 Product a b) c)
     f t = Left t
 
 axiomSumConst = Axiom {
@@ -97,32 +97,32 @@ axiomSumConst = Axiom {
   implementation = f
 }
   where
-    f (BinaryOp Sum (Const a) (Const b)) = Right (Const $ a + b)
+    f (Op2 Sum (Const a) (Const b)) = Right (Const $ a + b)
     f t = Left t
 
 axiomMultiplyConst = Axiom {
   description = "Multiply constants",
   example = (
-    BinaryOp Product (Const 2) (Const 3),
+    Op2 Product (Const 2) (Const 3),
     (Const 6)
   ),
   implementation = f
 }
   where
-    f (BinaryOp Product (Const a) (Const b)) = Right (Const $ a * b)
-    f (BinaryOp Exponent (Const a) (Const b)) = Right (Const $ a ^ b)
+    f (Op2 Product (Const a) (Const b)) = Right (Const $ a * b)
+    f (Op2 Exponent (Const a) (Const b)) = Right (Const $ a ^ b)
     f t = Left t
 
 axiomFactorialConst = Axiom {
   description = "Factorial constants",
   example = (
-    Factorial (Const 3),
+    Op1 Factorial (Const 3),
     (Const 6)
   ),
   implementation = f
 }
   where
-    f (Factorial (Const x)) = Right . Const $ factorial x
+    f (Op1 Factorial (Const x)) = Right . Const $ factorial x
     f t = Left t
 
 factorial 0 = 1
@@ -137,34 +137,34 @@ axiomIdentitySum = Axiom {
   implementation = f
 }
   where
-    f (BinaryOp Sum (Const 0) t) = Right t
-    f (BinaryOp Sum t (Const 0)) = Right t
+    f (Op2 Sum (Const 0) t) = Right t
+    f (Op2 Sum t (Const 0)) = Right t
     f t = Left t
 
-axiomIdentityBinaryOp Product = Axiom {
+axiomIdentityOp2 Product = Axiom {
   description = "Multiplicative identity",
   example = (
-    (BinaryOp Product (BinaryOp Product (Const 1) (Var "a")) (Const 1)),
+    (Op2 Product (Op2 Product (Const 1) (Var "a")) (Const 1)),
     (Var "a")
   ),
   implementation = f
 }
   where
-    f (BinaryOp Product (Const 1) t) = Right t
-    f (BinaryOp Product t (Const 1)) = Right t
-    f (BinaryOp Fraction t (Const 1)) = Right t
+    f (Op2 Product (Const 1) t) = Right t
+    f (Op2 Product t (Const 1)) = Right t
+    f (Op2 Fraction t (Const 1)) = Right t
     f t = Left t
 
-axiomNullBinaryOp Exponent = Axiom {
-  description = "BinaryOp Exponent of 0",
+axiomNullOp2 Exponent = Axiom {
+  description = "Op2 Exponent of 0",
   example = (
-    (BinaryOp Exponent (Var "a") (Const 0)),
+    (Op2 Exponent (Var "a") (Const 0)),
     (Const 1)
   ),
   implementation = f
 }
   where
-    f (BinaryOp Exponent t (Const 0)) = Right (Const 1)
+    f (Op2 Exponent t (Const 0)) = Right (Const 1)
     f t = Left t
 
 axiomIdentity = Axiom {
@@ -181,16 +181,16 @@ axiomIdentity = Axiom {
 axiomStepSeries = Axiom {
   description = "Step series",
   example = (
-    (BinaryOp (Series "k") (Var "a") (Var "k")),
-    (BinaryOp Sum (Var "a") (BinaryOp (Series "k") (BinaryOp Sum (Var "a") (Const 1)) (Var "k")))
+    (Op2 (Series "k") (Var "a") (Var "k")),
+    (Op2 Sum (Var "a") (Op2 (Series "k") (Op2 Sum (Var "a") (Const 1)) (Var "k")))
   ),
   implementation = f
 }
   where
-    f (BinaryOp (Series v) i t) = Right $
-      BinaryOp Sum
+    f (Op2 (Series v) i t) = Right $
+      Op2 Sum
         (walk (instantiateVariable v i) t)
-        (BinaryOp (Series v) (BinaryOp Sum i (Const 1)) t)
+        (Op2 (Series v) (Op2 Sum i (Const 1)) t)
     f t = Left t
 
 axiomDistribute = Axiom {
@@ -202,10 +202,10 @@ axiomDistribute = Axiom {
   implementation = f
 }
   where
-    f (BinaryOp Sum (BinaryOp Product p1l p1r) (BinaryOp Product p2l p2r))
-      | p1l == p2l = Right $ BinaryOp Product p1l (BinaryOp Sum p1r p2r)
-    f (BinaryOp Product pl (BinaryOp Sum sl sr)) = Right $ BinaryOp Sum (BinaryOp Product pl sl) (BinaryOp Product pl sr)
-    f (BinaryOp Sum v@(Var{}) p@(BinaryOp Product _ _)) = f (BinaryOp Sum (BinaryOp Product v (Const 1)) p)
+    f (Op2 Sum (Op2 Product p1l p1r) (Op2 Product p2l p2r))
+      | p1l == p2l = Right $ Op2 Product p1l (Op2 Sum p1r p2r)
+    f (Op2 Product pl (Op2 Sum sl sr)) = Right $ Op2 Sum (Op2 Product pl sl) (Op2 Product pl sr)
+    f (Op2 Sum v@(Var{}) p@(Op2 Product _ _)) = f (Op2 Sum (Op2 Product v (Const 1)) p)
     f t = Left t
 
 instantiateVariable :: String -> Term -> Term -> Term
@@ -228,55 +228,55 @@ ps = putStrLn . toAscii
 
 simplify t = walk f t
   where
-    f (Negate (Const a)) = Const (-a)
-    f (Negate (Negate a)) = a
-    f (BinaryOp Sum (Const a) (Const b)) = Const $ a + b
-    f (BinaryOp Product (Const a) (Const b)) = Const $ a * b
-    f (BinaryOp Exponent a (Const 0)) = Const 1
-    f (BinaryOp Exponent a (Const 1)) = a
-    f (BinaryOp Exponent (Const a) (Const b)) = Const $ a ^ b
-    f (BinaryOp Fraction a (Const 1)) = a
-    f (BinaryOp Fraction a (Const (-1))) = f $ Negate a
-    f t@(BinaryOp Fraction (Const a) (Const b)) =
+    f (Op1 Negate (Const a)) = Const (-a)
+    f (Op1 Negate (Op1 Negate a)) = a
+    f (Op2 Sum (Const a) (Const b)) = Const $ a + b
+    f (Op2 Product (Const a) (Const b)) = Const $ a * b
+    f (Op2 Exponent a (Const 0)) = Const 1
+    f (Op2 Exponent a (Const 1)) = a
+    f (Op2 Exponent (Const a) (Const b)) = Const $ a ^ b
+    f (Op2 Fraction a (Const 1)) = a
+    f (Op2 Fraction a (Const (-1))) = f $ Op1 Negate a
+    f t@(Op2 Fraction (Const a) (Const b)) =
       case gcd a b of
         1 -> t
-        n -> simplify $ BinaryOp Fraction (Const $ a `div` n) (Const $ b `div` n)
-    f (BinaryOp Product (Const 1) a) = a
-    f (BinaryOp Product a (Const 1)) = a
-    f (BinaryOp Product (Const (-1)) a) = f $ Negate a
-    f (BinaryOp Product a (Const (-1))) = f $ Negate a
-    f (BinaryOp Sum a (Const 0)) = a
-    f (BinaryOp Sum (Const 0) a) = a
+        n -> simplify $ Op2 Fraction (Const $ a `div` n) (Const $ b `div` n)
+    f (Op2 Product (Const 1) a) = a
+    f (Op2 Product a (Const 1)) = a
+    f (Op2 Product (Const (-1)) a) = f $ Op1 Negate a
+    f (Op2 Product a (Const (-1))) = f $ Op1 Negate a
+    f (Op2 Sum a (Const 0)) = a
+    f (Op2 Sum (Const 0) a) = a
     f x = x
 
-distribute t (BinaryOp Product a (BinaryOp Sum b c)) =
-  let x = cancelTerm t $ BinaryOp Fraction a t in
+distribute t (Op2 Product a (Op2 Sum b c)) =
+  let x = cancelTerm t $ Op2 Fraction a t in
 
-  BinaryOp Product x $
-    BinaryOp Sum
-      (BinaryOp Product t b)
-      (BinaryOp Product t c)
+  Op2 Product x $
+    Op2 Sum
+      (Op2 Product t b)
+      (Op2 Product t c)
 
-undistribute t (BinaryOp Sum a b) =
-  BinaryOp Product t $
-    BinaryOp Sum
-      (cancelTerm t $ BinaryOp Fraction a t)
-      (cancelTerm t $ BinaryOp Fraction b t)
+undistribute t (Op2 Sum a b) =
+  Op2 Product t $
+    Op2 Sum
+      (cancelTerm t $ Op2 Fraction a t)
+      (cancelTerm t $ Op2 Fraction b t)
 
 cancelTerm :: Term -> Term -> Term
-cancelTerm (BinaryOp Exponent x y) f@(BinaryOp Fraction (BinaryOp Exponent a b) (BinaryOp Exponent c d)) =
-  case BinaryOp Fraction <$> numerator <*> denominator of
+cancelTerm (Op2 Exponent x y) f@(Op2 Fraction (Op2 Exponent a b) (Op2 Exponent c d)) =
+  case Op2 Fraction <$> numerator <*> denominator of
     Just x -> x
     Nothing -> f
   where
-    numerator = if x == a then Just (BinaryOp Exponent a (BinaryOp Sum b (BinaryOp Product (Const (-1)) y))) else Nothing
-    denominator = if x == c then Just (BinaryOp Exponent c (BinaryOp Sum d (BinaryOp Product (Const (-1)) y))) else Nothing
+    numerator = if x == a then Just (Op2 Exponent a (Op2 Sum b (Op2 Product (Const (-1)) y))) else Nothing
+    denominator = if x == c then Just (Op2 Exponent c (Op2 Sum d (Op2 Product (Const (-1)) y))) else Nothing
 
-cancelTerm t f@(BinaryOp Fraction (BinaryOp Exponent _ _) (BinaryOp Exponent _ _)) = cancelTerm (BinaryOp Exponent t (Const 1)) f
-cancelTerm t (BinaryOp Fraction lhs@(BinaryOp Exponent _ _) rhs) = cancelTerm t (BinaryOp Fraction lhs (BinaryOp Exponent rhs (Const 1)))
-cancelTerm t (BinaryOp Fraction lhs rhs@(BinaryOp Exponent _ _)) = cancelTerm t (BinaryOp Fraction (BinaryOp Exponent lhs (Const 1)) rhs)
-cancelTerm t f@(BinaryOp Fraction (BinaryOp Product a b) (BinaryOp Product c d)) =
-    case BinaryOp Fraction <$> numerator <*> denominator of
+cancelTerm t f@(Op2 Fraction (Op2 Exponent _ _) (Op2 Exponent _ _)) = cancelTerm (Op2 Exponent t (Const 1)) f
+cancelTerm t (Op2 Fraction lhs@(Op2 Exponent _ _) rhs) = cancelTerm t (Op2 Fraction lhs (Op2 Exponent rhs (Const 1)))
+cancelTerm t (Op2 Fraction lhs rhs@(Op2 Exponent _ _)) = cancelTerm t (Op2 Fraction (Op2 Exponent lhs (Const 1)) rhs)
+cancelTerm t f@(Op2 Fraction (Op2 Product a b) (Op2 Product c d)) =
+    case Op2 Fraction <$> numerator <*> denominator of
       Just x -> x
       Nothing -> f
   where
@@ -290,9 +290,9 @@ cancelTerm t f@(BinaryOp Fraction (BinaryOp Product a b) (BinaryOp Product c d))
         (c, d) | c == t -> Just d
         (c, d) | d == t -> Just c
         _               -> Nothing
-cancelTerm t (BinaryOp Fraction l@(BinaryOp Product _ _) r) = cancelTerm t (BinaryOp Fraction l (BinaryOp Product r (Const 1)))
-cancelTerm t (BinaryOp Fraction l r@(BinaryOp Product _ _)) = cancelTerm t (BinaryOp Fraction l (BinaryOp Product (Const 1) r))
-cancelTerm t (BinaryOp Fraction l r) = cancelTerm t (BinaryOp Fraction (BinaryOp Product (Const 1) l) (BinaryOp Product (Const 1) r))
+cancelTerm t (Op2 Fraction l@(Op2 Product _ _) r) = cancelTerm t (Op2 Fraction l (Op2 Product r (Const 1)))
+cancelTerm t (Op2 Fraction l r@(Op2 Product _ _)) = cancelTerm t (Op2 Fraction l (Op2 Product (Const 1) r))
+cancelTerm t (Op2 Fraction l r) = cancelTerm t (Op2 Fraction (Op2 Product (Const 1) l) (Op2 Product (Const 1) r))
 
 data Crumb =
     LeftCrumb Term
@@ -303,17 +303,17 @@ type Crumbs = [Crumb]
 type Zipper = (Term, Crumbs)
 
 goLeft :: Zipper -> Zipper
-goLeft (BinaryOp op l r, cs) = (l, LeftCrumb (BinaryOp op Hole r):cs)
+goLeft (Op2 op l r, cs) = (l, LeftCrumb (Op2 op Hole r):cs)
 goLeft (t, cs) = (Hole, cs)
 
 goRight :: Zipper -> Zipper
-goRight (BinaryOp op l r, cs) = (r, RightCrumb (BinaryOp op l Hole):cs)
-goRight (Factorial t, cs) = (t, RightCrumb (Factorial Hole):cs)
+goRight (Op2 op l r, cs) = (r, RightCrumb (Op2 op l Hole):cs)
+goRight (Op1 Factorial t, cs) = (t, RightCrumb (Op1 Factorial Hole):cs)
 goRight (t, cs) = (Hole, cs)
 
 goUp :: Zipper -> Zipper
-goUp (t, LeftCrumb (BinaryOp op _ r):cs) = (BinaryOp op t r, cs)
-goUp (t, RightCrumb (BinaryOp op l _):cs) = (BinaryOp op l t, cs)
+goUp (t, LeftCrumb (Op2 op _ r):cs) = (Op2 op t r, cs)
+goUp (t, RightCrumb (Op2 op l _):cs) = (Op2 op l t, cs)
 
 goRoot :: Zipper -> Term
 goRoot (t, []) = t
@@ -342,39 +342,40 @@ locate' a z = msum [locate' a (goLeft z), locate' a (goRight z)]
 termEqual :: Term -> Term -> Bool
 termEqual Hole _ = True
 termEqual _ Hole = True
-termEqual (BinaryOp op1 a b) (BinaryOp op2 c d) = op1 == op2 && a `termEqual` c && b `termEqual` d
+termEqual (Op2 op1 a b) (Op2 op2 c d) = op1 == op2 && a `termEqual` c && b `termEqual` d
 termEqual (Var a) (Var c) = a == c
 termEqual (Const a) (Const c) = a == c
-termEqual (Factorial a) (Factorial c) = a == c
+termEqual (Op1 Factorial a) (Op1 Factorial c) = a == c
 termEqual _ _ = False
 
-data BinaryTerm = Sum | Product | Fraction | Exponent | Series String
+data Term1 = Factorial | Negate
+  deriving (Show, Eq)
+data Term2 = Sum | Product | Fraction | Exponent | Series String
   deriving (Show, Eq)
 
 data Term =
   Hole |
   Const Integer |
-  BinaryOp BinaryTerm Term Term |
   Var String |
-  Factorial Term |
-  Negate Term
+  Op1 Term1 Term |
+  Op2 Term2 Term Term
   deriving (Show, Eq)
 
 instance IsString Term where
     fromString cs = parseUnsafe cs
 
 walk :: (Term -> Term) -> Term -> Term
-walk f (BinaryOp op a b) = f (BinaryOp op (walk f a) (walk f b))
-walk f (Factorial t) = f (Factorial (walk f t))
+walk f (Op2 op a b) = f (Op2 op (walk f a) (walk f b))
+walk f (Op1 Factorial t) = f (Op1 Factorial (walk f t))
 walk f t@(Const{}) = f t
 walk f t@(Var{}) = f t
-walk f (Negate t) = f (Negate $ walk f t)
+walk f (Op1 Negate t) = f (Op1 Negate $ walk f t)
 
 --data Matcher =
 --  RootMatcher
 --  | LeftMatcher Term
 --  | AllMatcher
---  | BinaryOp SeriesMatcher String
+--  | Op2 SeriesMatcher String
 --
 --walkMatched :: Matcher -> (Term -> Either Term Term) -> Term -> Either Term Term
 --walkMatched m f t = Right $ walk f' t
@@ -389,16 +390,16 @@ walk f (Negate t) = f (Negate $ walk f t)
 
 --matcherApplies :: Matcher -> Term -> Bool
 --matcherApplies (LeftMatcher x) (Sum a _) = x == a
---matcherApplies (LeftMatcher x) (BinaryOp Product a _) = x == a
---matcherApplies (BinaryOp SeriesMatcher v) (BinaryOp Series v' _ _) = v == v'
+--matcherApplies (LeftMatcher x) (Op2 Product a _) = x == a
+--matcherApplies (Op2 SeriesMatcher v) (Op2 Series v' _ _) = v == v'
 --matcherApplies AllMatcher _ = True
 --matcherApplies _ _ = False
 
-precedence (Factorial{}) = 40
-precedence (BinaryOp Exponent _ _) = 30
-precedence (BinaryOp Product _ _) = 20
-precedence (BinaryOp Fraction _ _) = 20
-precedence (BinaryOp Sum _ _) = 10
+precedence (Op1 Factorial _) = 40
+precedence (Op2 Exponent _ _) = 30
+precedence (Op2 Product _ _) = 20
+precedence (Op2 Fraction _ _) = 20
+precedence (Op2 Sum _ _) = 10
 precedence _ = 99
 
 maybeBrackets parent child = let inner = toUnicode child in
@@ -410,20 +411,20 @@ maybeBrackets parent child = let inner = toUnicode child in
 toUnicode Hole             = "_"
 toUnicode (Const a)        = show a
 toUnicode (Var a)          = a
-toUnicode t@(BinaryOp Sum a (Negate b))      = maybeBrackets t a <> " - " <> maybeBrackets t b
-toUnicode t@(BinaryOp Sum a b) = maybeBrackets t a <> " + " <> maybeBrackets t b
-toUnicode t@(BinaryOp Product a b)  =
+toUnicode t@(Op2 Sum a (Op1 Negate b))      = maybeBrackets t a <> " - " <> maybeBrackets t b
+toUnicode t@(Op2 Sum a b) = maybeBrackets t a <> " + " <> maybeBrackets t b
+toUnicode t@(Op2 Product a b)  =
   let operator = case (a, b) of
                    (_, Const{}) -> "⋅"
-                   (_, Negate{}) -> "⋅"
+                   (_, Op1 Negate _) -> "⋅"
                    _            -> ""
   in maybeBrackets t a <> operator  <> maybeBrackets t b
 
-toUnicode t@(Factorial a)  = maybeBrackets t a <> "!"
-toUnicode t@(BinaryOp Fraction a b) = maybeBrackets t a <> "/" <> maybeBrackets t b
-toUnicode t@(BinaryOp Exponent a b) = maybeBrackets t a <> "^" <> maybeBrackets t b
-toUnicode t@(Negate a) = "-" <> maybeBrackets t a
-toUnicode (BinaryOp (Series v) i t)   =
+toUnicode t@(Op1 Factorial a)  = maybeBrackets t a <> "!"
+toUnicode t@(Op2 Fraction a b) = maybeBrackets t a <> "/" <> maybeBrackets t b
+toUnicode t@(Op2 Exponent a b) = maybeBrackets t a <> "^" <> maybeBrackets t b
+toUnicode t@(Op1 Negate a) = "-" <> maybeBrackets t a
+toUnicode (Op2 (Series v) i t)   =
   "Σ[" <> v <> " = " <> toUnicode i <> "](" <> toUnicode t <> ")"
 
 toAscii :: Term -> String
@@ -460,7 +461,7 @@ apply axiom = do
 --    --  walk (
 --    --              ignoreError . implementation axiomSumConst .
 --    --              ignoreError . implementation axiomMultiplyConst .
---    --              ignoreError . implementation axiomNullBinaryOp Exponent
+--    --              ignoreError . implementation axiomNullOp2 Exponent
 --    --            ) t'
 --      tell [(t'', axiom)]
 --
@@ -474,15 +475,15 @@ apply axiom = do
 --  apply RootMatcher axiomAssociateSum
 --  apply (LeftMatcher (Const 2)) axiomSumConst
 
---body = runProcess (BinaryOp Series "k" (Const 0) (Sum (Var "x") (Var "k"))) $ do
---  apply (BinaryOp SeriesMatcher "k") axiomStepBinaryOp Series
---  apply (BinaryOp SeriesMatcher "k") axiomStepBinaryOp Series
+--body = runProcess (Op2 Series "k" (Const 0) (Sum (Var "x") (Var "k"))) $ do
+--  apply (Op2 SeriesMatcher "k") axiomStepOp2 Series
+--  apply (Op2 SeriesMatcher "k") axiomStepOp2 Series
 
---body = runProcess (BinaryOp Product (Const 2) (BinaryOp Product (Const 3) (Const 4))) $ do
---  apply RootMatcher axiomCommuteBinaryOp Product
+--body = runProcess (Op2 Product (Const 2) (Op2 Product (Const 3) (Const 4))) $ do
+--  apply RootMatcher axiomCommuteOp2 Product
 --  apply (LeftMatcher (Const 3)) axiomMultiplyConst
 
---body = runProcess (Sum (Var "x") (BinaryOp Product (Var "x") (Var "x"))) $ do
+--body = runProcess (Sum (Var "x") (Op2 Product (Var "x") (Var "x"))) $ do
 --  apply RootMatcher axiomDistribute
 --  apply RootMatcher axiomDistribute
   --apply RootMatcher axiomDistribute
@@ -507,10 +508,10 @@ termExpr = (parens expr
              <|> (char '_' >> return Hole)
            ) <* whiteSpace
 
-table = [ [postfix "!" Factorial, series "S", prefix "-" Negate ]
-        , [binary "^" (BinaryOp Exponent) AssocLeft ]
-        , [binary "*" (BinaryOp Product) AssocLeft, binary "/" (BinaryOp Fraction) AssocLeft, binary "" (BinaryOp Product) AssocLeft]
-        , [binary "+" (BinaryOp Sum) AssocLeft, binary "-" (\a b -> BinaryOp Sum a (Negate b)) AssocLeft ]
+table = [ [postfix "!" (Op1 Factorial), series "S", prefix "-" (Op1 Negate) ]
+        , [binary "^" (Op2 Exponent) AssocLeft ]
+        , [binary "*" (Op2 Product) AssocLeft, binary "/" (Op2 Fraction) AssocLeft, binary "" (Op2 Product) AssocLeft]
+        , [binary "+" (Op2 Sum) AssocLeft, binary "-" (\a b -> Op2 Sum a (Op1 Negate b)) AssocLeft ]
         ]
 
 series op = Prefix $
@@ -524,7 +525,7 @@ series op = Prefix $
     i <- expr
     char ']'
 
-    return $ BinaryOp (Series v) i
+    return $ Op2 (Series v) i
 
 prefix name fun = Prefix (do { reservedOp name; return fun })
 postfix name fun = Postfix (do { reservedOp name; return fun })
@@ -548,21 +549,21 @@ highlightTerms m = do
     traceM "---"
 
 -- TODO: Handle variable aliasing properly for nested series
-e_to t = (BinaryOp (Series "k") (Const 0) (BinaryOp Fraction (BinaryOp Exponent t (Var "k")) (Factorial (Var "k"))))
---cos_x = (BinaryOp Series "m" (Const 0) (BinaryOp Product (BinaryOp Exponent (Const (-1)) (Var "m")) (BinaryOp Fraction (BinaryOp Exponent (Var "x") (BinaryOp Product (Const 2) (Var "m"))) (Factorial (BinaryOp Product (Const 2) (Var "m"))))))
+e_to t = (Op2 (Series "k") (Const 0) (Op2 Fraction (Op2 Exponent t (Var "k")) (Op1 Factorial (Var "k"))))
+--cos_x = (Op2 Series "m" (Const 0) (Op2 Product (Op2 Exponent (Const (-1)) (Var "m")) (Op2 Fraction (Op2 Exponent (Var "x") (Op2 Product (Const 2) (Var "m"))) (Op1 Factorial (Op2 Product (Const 2) (Var "m"))))))
 
 cos_x = parseUnsafe "S[m=0]((-1)^m*(x^(2*m))/(2*m)!)"
 --body = runProcess (e_to cos_x) $ do
---  apply (BinaryOp SeriesMatcher "m") axiomStepBinaryOp Series
---  --apply (BinaryOp SeriesMatcher "k") axiomStepBinaryOp Series
---  --apply AllMatcher axiomFactorialConst
---  --apply AllMatcher axiomIdentityBinaryOp Product
---  --apply (BinaryOp SeriesMatcher "m") axiomStepBinaryOp Series
---  --apply (BinaryOp SeriesMatcher "k") axiomStepBinaryOp Series
---  --apply AllMatcher axiomFactorialConst
---  --apply AllMatcher axiomIdentityBinaryOp Product
+--  apply (Op2 SeriesMatcher "m") axiomStepOp2 Series
+--  --apply (Op2 SeriesMatcher "k") axiomStepOp2 Series
+--  --apply AllMatcher axiomOp1 FactorialConst
+--  --apply AllMatcher axiomIdentityOp2 Product
+--  --apply (Op2 SeriesMatcher "m") axiomStepOp2 Series
+--  --apply (Op2 SeriesMatcher "k") axiomStepOp2 Series
+--  --apply AllMatcher axiomOp1 FactorialConst
+--  --apply AllMatcher axiomIdentityOp2 Product
 --
---  highlightTerms matchBinaryOp Series
+--  highlightTerms matchOp2 Series
 --  --apply RootMatcher axiomAssociateSum
 
 printAxioms axioms = do
@@ -636,7 +637,7 @@ main = defaultMain tests
 --  focus "sin(x+h)" $ apply (axiomIdentity "sin(a+b)" "sin(a)cos(b) + sin(b)cos(a)")
 --  focus "_-sin(x)" $ apply axiomCommuteSum
 --  focus "sin(x)*_-sin(x)" $ apply axiomDistributeSum
---  focus "_/h" $ apply axiomDistributeBinaryOp Product
+--  focus "_/h" $ apply axiomDistributeOp2 Product
 --  focus "lim[h->_](_+_)" $ apply axiomDistributeLimit
 --  focus "lim[h->_](sin(x)_)" apply (axiomFactor "sin(x)")
 --  focus "lim[h->_](cos(x)_)" apply (axiomFactor "cos(x)")
