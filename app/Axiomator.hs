@@ -29,11 +29,27 @@ import Control.Monad.Freer.State (State(..), get, gets, put, runState)
 import Control.Monad.Freer.Writer (Writer(..), tell, runWriter)
 import Test.Tasty
 import Test.Tasty.HUnit
---data Axiom =
---  CommuteSum |
---  AssociateSumLR |
---  AssociateSumRL |
---  CombineConst
+
+data Term1 = Factorial | Negate
+  deriving (Show, Eq)
+data Term2 = Sum | Product | Fraction | Exponent | Series String
+  deriving (Show, Eq)
+
+data Term =
+  Hole |
+  Const Integer |
+  Var String |
+  Op1 Term1 Term |
+  Op2 Term2 Term Term
+  deriving (Show, Eq)
+
+data Crumb =
+    LeftCrumb Term
+  | RightCrumb Term
+  deriving (Show)
+
+type Crumbs = [Crumb]
+type Zipper = (Term, Crumbs)
 
 -- TODO: replace with Text package
 replace a b = map $ maybe b id . mfilter (/= a) . Just
@@ -294,14 +310,6 @@ cancelTerm t (Op2 Fraction l@(Op2 Product _ _) r) = cancelTerm t (Op2 Fraction l
 cancelTerm t (Op2 Fraction l r@(Op2 Product _ _)) = cancelTerm t (Op2 Fraction l (Op2 Product (Const 1) r))
 cancelTerm t (Op2 Fraction l r) = cancelTerm t (Op2 Fraction (Op2 Product (Const 1) l) (Op2 Product (Const 1) r))
 
-data Crumb =
-    LeftCrumb Term
-  | RightCrumb Term
-  deriving (Show)
-
-type Crumbs = [Crumb]
-type Zipper = (Term, Crumbs)
-
 goLeft :: Zipper -> Zipper
 goLeft (Op2 op l r, cs) = (l, LeftCrumb (Op2 op Hole r):cs)
 goLeft (t, cs) = (Hole, cs)
@@ -348,19 +356,6 @@ termEqual (Const a) (Const c) = a == c
 termEqual (Op1 Factorial a) (Op1 Factorial c) = a == c
 termEqual _ _ = False
 
-data Term1 = Factorial | Negate
-  deriving (Show, Eq)
-data Term2 = Sum | Product | Fraction | Exponent | Series String
-  deriving (Show, Eq)
-
-data Term =
-  Hole |
-  Const Integer |
-  Var String |
-  Op1 Term1 Term |
-  Op2 Term2 Term Term
-  deriving (Show, Eq)
-
 instance IsString Term where
     fromString cs = parseUnsafe cs
 
@@ -370,30 +365,6 @@ walk f (Op1 Factorial t) = f (Op1 Factorial (walk f t))
 walk f t@(Const{}) = f t
 walk f t@(Var{}) = f t
 walk f (Op1 Negate t) = f (Op1 Negate $ walk f t)
-
---data Matcher =
---  RootMatcher
---  | LeftMatcher Term
---  | AllMatcher
---  | Op2 SeriesMatcher String
---
---walkMatched :: Matcher -> (Term -> Either Term Term) -> Term -> Either Term Term
---walkMatched m f t = Right $ walk f' t
---  where
---    f' :: Term -> Term
---    f' t = if matcherApplies m t then
---             case f t of
---               Right t' -> t'
---               Left t' -> t'
---           else
---             t
-
---matcherApplies :: Matcher -> Term -> Bool
---matcherApplies (LeftMatcher x) (Sum a _) = x == a
---matcherApplies (LeftMatcher x) (Op2 Product a _) = x == a
---matcherApplies (Op2 SeriesMatcher v) (Op2 Series v' _ _) = v == v'
---matcherApplies AllMatcher _ = True
---matcherApplies _ _ = False
 
 precedence (Op1 Factorial _) = 40
 precedence (Op2 Exponent _ _) = 30
@@ -449,44 +420,6 @@ apply axiom = do
       put (Env t')
     Left t' -> do
       error $ "couldn't apply " <> description axiom <> " to " <> toUnicode t' <> " (full term is " <> toUnicode t <> ")"
-
---applyOld :: AppEff effs => Matcher -> Axiom -> Eff effs ()
---applyOld m axiom = do
---  (Env t) <- get
---
---  -- TODO: Handle error
---  case walkMatched m (implementation axiom) t of
---    Right t' -> do
---      let t'' =  t'
---    --  walk (
---    --              ignoreError . implementation axiomSumConst .
---    --              ignoreError . implementation axiomMultiplyConst .
---    --              ignoreError . implementation axiomNullOp2 Exponent
---    --            ) t'
---      tell [(t'', axiom)]
---
---      put (Env t'')
---    Left t' -> do
---      error $ "couldn't apply " <> description axiom <> " to " <> toAscii t' <> " (full term is " <> toAscii t <> ")"
-
---body = runProcess (Sum (Var "x") (Sum (Const 2) (Const 3))) $ do
---  apply RootMatcher axiomCommuteSum
---  apply RootMatcher axiomAssociateSum
---  apply RootMatcher axiomAssociateSum
---  apply (LeftMatcher (Const 2)) axiomSumConst
-
---body = runProcess (Op2 Series "k" (Const 0) (Sum (Var "x") (Var "k"))) $ do
---  apply (Op2 SeriesMatcher "k") axiomStepOp2 Series
---  apply (Op2 SeriesMatcher "k") axiomStepOp2 Series
-
---body = runProcess (Op2 Product (Const 2) (Op2 Product (Const 3) (Const 4))) $ do
---  apply RootMatcher axiomCommuteOp2 Product
---  apply (LeftMatcher (Const 3)) axiomMultiplyConst
-
---body = runProcess (Sum (Var "x") (Op2 Product (Var "x") (Var "x"))) $ do
---  apply RootMatcher axiomDistribute
---  apply RootMatcher axiomDistribute
-  --apply RootMatcher axiomDistribute
 
 lexer :: Tok.TokenParser ()
 lexer = Tok.makeTokenParser style
@@ -550,21 +483,7 @@ highlightTerms m = do
 
 -- TODO: Handle variable aliasing properly for nested series
 e_to t = (Op2 (Series "k") (Const 0) (Op2 Fraction (Op2 Exponent t (Var "k")) (Op1 Factorial (Var "k"))))
---cos_x = (Op2 Series "m" (Const 0) (Op2 Product (Op2 Exponent (Const (-1)) (Var "m")) (Op2 Fraction (Op2 Exponent (Var "x") (Op2 Product (Const 2) (Var "m"))) (Op1 Factorial (Op2 Product (Const 2) (Var "m"))))))
-
 cos_x = parseUnsafe "S[m=0]((-1)^m*(x^(2*m))/(2*m)!)"
---body = runProcess (e_to cos_x) $ do
---  apply (Op2 SeriesMatcher "m") axiomStepOp2 Series
---  --apply (Op2 SeriesMatcher "k") axiomStepOp2 Series
---  --apply AllMatcher axiomOp1 FactorialConst
---  --apply AllMatcher axiomIdentityOp2 Product
---  --apply (Op2 SeriesMatcher "m") axiomStepOp2 Series
---  --apply (Op2 SeriesMatcher "k") axiomStepOp2 Series
---  --apply AllMatcher axiomOp1 FactorialConst
---  --apply AllMatcher axiomIdentityOp2 Product
---
---  highlightTerms matchOp2 Series
---  --apply RootMatcher axiomAssociateSum
 
 printAxioms axioms = do
   let paddingIndex = length (show $ length axioms)
