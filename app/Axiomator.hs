@@ -75,13 +75,14 @@ instance Eq Axiom where
 instance Show Axiom where
   show (Axiom { description = d }) = d
 
-axiomSubstitute a b = Axiom {
+axiomSubstitute pattern replacement = Axiom {
   description = "Replace expression with known alternative",
-  example = (a, b),
+  example = (pattern, replacement),
   implementation = f
 }
   where
-    f _ = Right b -- TODO: Check free variables
+    -- TODO: Verify all occurences of variables in t are equal
+    f t = Right $ replaceVars (identifyVars pattern t) replacement
 
 axiomCommuteSum = Axiom {
   description = "Commutative law for addition",
@@ -230,15 +231,21 @@ axiomDistribute = Axiom {
   description = "Distributive law",
   example = (
     parseUnsafe "a*(b+c)",
-    parseUnsafe "(a*b)+(a*c)"
+    parseUnsafe "ab+ac"
   ),
   implementation = f
 }
   where
+    -- ab+ac -> a*(b+c)
     f (Op2 Sum (Op2 Product p1l p1r) (Op2 Product p2l p2r))
       | p1l == p2l = Right $ Op2 Product p1l (Op2 Sum p1r p2r)
+    -- a(b+c) -> ab+ac
     f (Op2 Product pl (Op2 Sum sl sr)) = Right $ Op2 Sum (Op2 Product pl sl) (Op2 Product pl sr)
-    f (Op2 Sum v@(Var{}) p@(Op2 Product _ _)) = f (Op2 Sum (Op2 Product v (Const 1)) p)
+    -- -x+ab -> x*-1+ab
+    f (Op2 Sum (Op1 Negate l) p@(Op2 Product _ _)) = f (Op2 Sum (Op2 Product l (Const $ -1)) p)
+    -- x+ab -> x*1+ab
+    f (Op2 Sum l p@(Op2 Product _ _)) = f (Op2 Sum (Op2 Product l (Const 1)) p)
+    f (Op2 Fraction (Op2 Sum l r) d) = Right $ Op2 Sum (Op2 Fraction l d) (Op2 Fraction r d)
     f t = Left t
 
 instantiateVariable :: String -> Term -> Term -> Term
@@ -329,12 +336,15 @@ cancelTerm t (Op2 Fraction l r) = cancelTerm t (Op2 Fraction (Op2 Product (Const
 
 goLeft :: Zipper -> Zipper
 goLeft (Op2 op l r, cs) = (l, LeftCrumb (Op2 op Hole r):cs)
-goLeft (t, cs) = (Hole, cs)
+goLeft (Op1 op l, cs) = (l, LeftCrumb (Op1 op Hole):cs)
+goLeft z = error $ show z
+--goLeft (t, cs) = (Hole, cs)
 
 goRight :: Zipper -> Zipper
 goRight (Op2 op l r, cs) = (r, RightCrumb (Op2 op l Hole):cs)
 goRight (Op1 Factorial t, cs) = (t, RightCrumb (Op1 Factorial Hole):cs)
-goRight (t, cs) = (Hole, cs)
+goRight z = error $ show z
+--goRight (t, cs) = (Hole, cs)
 
 goUp :: Zipper -> Zipper
 goUp (t, LeftCrumb (Op2 op _ r):cs) = (Op2 op t r, cs)
@@ -343,6 +353,15 @@ goUp (t, RightCrumb (Op2 op l _):cs) = (Op2 op l t, cs)
 goRoot :: Zipper -> Term
 goRoot (t, []) = t
 goRoot z = goRoot . goUp $ z
+
+
+-- TODO: Handle when structure isn't identical
+follow :: Zipper -> Zipper -> Zipper
+follow (_, pattern) target = (foldr (.) id . extractF $ pattern) target
+  where
+    extractF [] = []
+    extractF (LeftCrumb _:cs) = (goLeft:extractF cs)
+    extractF (RightCrumb _:cs) = (goRight:extractF cs)
 
 filterZip :: (Term -> Bool) -> Zipper -> [Zipper]
 filterZip f (Hole, _) = []
@@ -355,6 +374,44 @@ filterZip f z@(t, cs) = do
 isConst (Const t) = True
 isConst _ = False
 
+goDown :: Zipper -> [Zipper]
+goDown (Op2 op l r, cs) = [(l, LeftCrumb (Op2 op Hole r):cs), (r, RightCrumb (Op2 op l Hole):cs)]
+goDown (Op1 op l, cs) = [(l, LeftCrumb (Op1 op Hole):cs)]
+goDown _ = []
+
+allZips :: Term -> [Zipper]
+allZips t = allZips' (t, [])
+
+allZips' :: Zipper -> [Zipper]
+allZips' z = let zs = goDown z in z:concatMap allZips' zs
+
+
+locateVars :: Term -> [Zipper]
+locateVars = filter isVar . allZips
+  where
+    isVar (Var _, _) = True
+    isVar _ = False
+
+-- For each var
+--   follow in t
+--   assign value to var
+--   need a map of var -> Term
+
+mkZipper t = (t, [])
+
+identifyVars :: Term -> Term -> [(String, Zipper)]
+identifyVars pattern t = map f . locateVars $ pattern
+  where
+    f z@(Var x, _) = (x, follow z (mkZipper t))
+
+replaceVars :: [(String, Zipper)] -> Term -> Term
+replaceVars vs t = foldl f t vs
+  where
+    f :: Term -> (String, Zipper) -> Term
+    f t' (v, (rt, _)) = walk (instantiateVariable v rt) t'
+
+
+
 locate :: Term -> Term -> Maybe Zipper
 locate needle haystack = locate' needle (haystack, [])
 
@@ -362,7 +419,7 @@ locate' :: Term -> Zipper -> Maybe Zipper
 locate' Hole z = Just z
 locate' _ (Hole, _) = Nothing
 locate' a z@(b, _) | a `termEqual` b = Just z
-locate' a z = msum [locate' a (goLeft z), locate' a (goRight z)]
+locate' a z = msum . map (locate' a) . goDown $ z
 
 termEqual :: Term -> Term -> Bool
 termEqual Hole _ = True
@@ -379,8 +436,7 @@ instance IsString Term where
 walk :: (Term -> Term) -> Term -> Term
 walk f (Op1 op t) = f (Op1 op (walk f t))
 walk f (Op2 op a b) = f (Op2 op (walk f a) (walk f b))
-walk f t@(Const{}) = f t
-walk f t@(Var{}) = f t
+walk f t = f t
 
 precedence (Op1 Factorial _) = 40
 precedence (Op2 Exponent _ _) = 30
@@ -596,8 +652,9 @@ solution = do
 
   focus "sin(x+h)" $ apply (axiomSubstitute "sin(a+b)" "sin(a)cos(b) + sin(b)cos(a)")
   focus "_-sin(x)" $ apply axiomCommuteSum
-  -- focus "sin(x)*_-sin(x)" $ apply axiomDistribute
---  focus "_/h" $ apply axiomDistributeOp2 Product
+  focus "-(sin(x))+_" $ apply axiomAssociateSum
+  focus "-(sin(x))+_" $ apply axiomDistribute
+  focus "_/h" $ apply axiomDistribute
 --  focus "lim[h->_](_+_)" $ apply axiomDistributeLimit
 --  focus "lim[h->_](sin(x)_)" apply (axiomFactor "sin(x)")
 --  focus "lim[h->_](cos(x)_)" apply (axiomFactor "cos(x)")
