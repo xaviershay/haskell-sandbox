@@ -115,14 +115,15 @@ axiomCommuteProduct = Axiom {
 axiomAssociateProduct = Axiom {
   description = "Associative law for multiplication",
   example = (
-    Op2 Product (Var "a") (Op2 Product (Var "b") (Var "c")),
-    Op2 Product (Op2 Product (Var "a") (Var "b")) (Var "c")
+    "a(bc)",
+    "(ab)c"
   ),
   implementation = f
 }
   where
     f (Op2 Product (Op2 Product a b) c) = Right (Op2 Product a (Op2 Product b c))
     f (Op2 Product a (Op2 Product b c)) = Right (Op2 Product (Op2 Product a b) c)
+    f (Op2 Fraction (Op2 Product a b) c) = Right (Op2 Product a (Op2 Fraction b c))
     f t = Left t
 
 axiomSumConst = Axiom {
@@ -175,7 +176,7 @@ axiomIdentitySum = Axiom {
     f (Op2 Sum t (Const 0)) = Right t
     f t = Left t
 
-axiomIdentityOp2 Product = Axiom {
+axiomIdentityProduct = Axiom {
   description = "Multiplicative identity",
   example = (
     (Op2 Product (Op2 Product (Const 1) (Var "a")) (Const 1)),
@@ -187,6 +188,32 @@ axiomIdentityOp2 Product = Axiom {
     f (Op2 Product (Const 1) t) = Right t
     f (Op2 Product t (Const 1)) = Right t
     f (Op2 Fraction t (Const 1)) = Right t
+    f t = Left t
+
+axiomZeroSum = Axiom {
+  description = "Additive zero",
+  example = (
+    "a+0",
+    "a"
+  ),
+  implementation = f
+}
+  where
+    f (Op2 Sum (Const 0) t) = Right t
+    f (Op2 Sum t (Const 0)) = Right t
+    f t = Left t
+
+axiomZeroProduct = Axiom {
+  description = "Multiplicative zero",
+  example = (
+    "a*0",
+    "0"
+  ),
+  implementation = f
+}
+  where
+    f (Op2 Product (Const 0) t) = Right (Const 0)
+    f (Op2 Product t (Const 0)) = Right (Const 0)
     f t = Left t
 
 axiomNullOp2 Exponent = Axiom {
@@ -258,6 +285,18 @@ axiomDistributeLimit = Axiom {
 }
   where
     f (Op2 limit@(Limit _) v (Op2 Sum l r)) = Right $ Op2 Sum (Op2 limit v l) (Op2 limit v r)
+    f t = Left t
+
+axiomFactor factor = Axiom {
+  description = "Factor",
+  example = (
+    parseUnsafe "lim[h->x](ab)",
+    parseUnsafe "a*lim[h->x](b)"
+  ),
+  implementation = f
+}
+  where
+    f (Op2 limit@(Limit _) v inner@(Op2 Product _ _)) = Right $ Op2 Product factor (Op2 limit v (simplify . cancelTerm factor $ Op2 Fraction inner factor))
     f t = Left t
 
 instantiateVariable :: String -> Term -> Term -> Term
@@ -440,6 +479,8 @@ termEqual (Op1 op1 a) (Op1 op2 c) = op1 == op2 && a `termEqual` c
 termEqual (Op2 op1 a b) (Op2 op2 c d) = op1 == op2 && a `termEqual` c && b `termEqual` d
 termEqual (Var a) (Var c) = a == c
 termEqual (Const a) (Const c) = a == c
+termEqual (Const a) (Op1 Negate (Const c)) = a == -c
+termEqual (Op1 Negate (Const a)) (Const c) = a == -c
 termEqual _ _ = False
 
 instance IsString Term where
@@ -668,12 +709,17 @@ solution = do
   focus "-(sin(x))+_" $ apply axiomDistribute
   focus "_/h" $ apply axiomDistribute
   focus "lim[h->_](_)" $ apply axiomDistributeLimit
---  focus "lim[h->_](sin(x)_)" apply (axiomFactor "sin(x)")
---  focus "lim[h->_](cos(x)_)" apply (axiomFactor "cos(x)")
---  focus "lim[h->_](sin(h)_)" apply (axiomIdentity "lim[a->0](sin(a)/a)" "1")
---  focus "lim[h->_](cos(h)_)" apply (axiomIdentity "lim[a->0]((cos(a)-1)/a)" "0")
---  apply axiomZero
---  apply axiomIdentity
+  focus "(sin(x)*_)/_" $ apply axiomAssociateProduct
+  focus "lim[h->_](sin(x)_)" $ apply (axiomFactor "sin(x)")
+  focus "sin(h)*_" $ apply axiomCommuteProduct
+  focus "(cos(x)*_)/_" $ apply axiomAssociateProduct
+  focus "lim[h->_](cos(x)_)" $ apply (axiomFactor "cos(x)")
+  focus "lim[h->_](sin(h)/_)" $ apply (axiomSubstitute "lim[a->0](sin(a)/a)" "1")
+  focus "-(1)+cos(h)" $ apply axiomCommuteSum
+  focus "lim[h->_]((cos(h)-1)/_)" $ apply (axiomSubstitute "lim[a->0]((cos(a)-1)/a)" "0")
+  focus "sin(x)_" $ apply axiomZeroProduct
+  focus "cos(x)_" $ apply axiomIdentityProduct
+  apply axiomZeroSum
 
 validate :: (Term -> Term) -> Term -> Term -> TestTree
 validate f input expected =
