@@ -248,6 +248,18 @@ axiomDistribute = Axiom {
     f (Op2 Fraction (Op2 Sum l r) d) = Right $ Op2 Sum (Op2 Fraction l d) (Op2 Fraction r d)
     f t = Left t
 
+axiomDistributeLimit = Axiom {
+  description = "Distributive law for limits",
+  example = (
+    parseUnsafe "lim[h->x](a+b)",
+    parseUnsafe "lim[h->x](a) + lim[h->x](b)"
+  ),
+  implementation = f
+}
+  where
+    f (Op2 limit@(Limit _) v (Op2 Sum l r)) = Right $ Op2 Sum (Op2 limit v l) (Op2 limit v r)
+    f t = Left t
+
 instantiateVariable :: String -> Term -> Term -> Term
 instantiateVariable name value (Var vname) | name == vname = value
 instantiateVariable _ _ t = t
@@ -655,7 +667,7 @@ solution = do
   focus "-(sin(x))+_" $ apply axiomAssociateSum
   focus "-(sin(x))+_" $ apply axiomDistribute
   focus "_/h" $ apply axiomDistribute
---  focus "lim[h->_](_+_)" $ apply axiomDistributeLimit
+  focus "lim[h->_](_)" $ apply axiomDistributeLimit
 --  focus "lim[h->_](sin(x)_)" apply (axiomFactor "sin(x)")
 --  focus "lim[h->_](cos(x)_)" apply (axiomFactor "cos(x)")
 --  focus "lim[h->_](sin(h)_)" apply (axiomIdentity "lim[a->0](sin(a)/a)" "1")
