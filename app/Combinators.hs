@@ -107,24 +107,20 @@ launch requested loaded remote =
   
 main = do
   let requested = signals [("repair", -50), ("bot", -50)]
-  let loaded = signals [("repair", 10), ("bot", 50)]
+  let loaded = signals [("repair", 10), ("bot", 40)]
   let remote = if True then signals [("black", 1), ("bot", 0), ("repair", 49)] else mempty
 
   let brownoutConstant = signals [("black", -1)]
 
   let whatDoWeWant = math All (*) (const (-1)) $ requested
-  let brownoutFakeRequests =
-        math All (*) (signalValue "black") $
-        (math (Single "black") (*) (const (-1000000)))
-        (remote `add` brownoutConstant) `add` whatDoWeWant
+  let brownoutMultiplier = math (Single "black") (*) (const (-1000000)) $ remote `add` brownoutConstant
+  let brownoutFakeRequests = math All (*) (signalValue "black") $ brownoutMultiplier `add` whatDoWeWant
 
+  let requestedInflated = math All (*) (const (-1)) >>> math All (+) (const 1000000) $ requested
   let filterable =
-        boolean Each gte (const 1000000) Each $
-        ((math All (*) (const (-1))
-           >>> math All (+) (const (1000000)) $ requested)
-        `add` remote)
-  let filterRequested =
-           ((math All (-) (const 1000000)) $ filterable) `add` requested
+        boolean Each gte (const 1000000) Each >> math All (-) (const 1000000) $
+        requestedInflated `add` remote
+  let filterRequested = filterable `add` requested
 
   let differential = 
         math All (*) (const (-1)) >>> boolean Each gte (const 0) Each $ remote `add` requested `add` loaded `add` brownoutFakeRequests
