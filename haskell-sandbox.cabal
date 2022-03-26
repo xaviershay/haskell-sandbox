@@ -150,6 +150,7 @@ executable lsystem
                      , freer-simple
                      , tasty
                      , tasty-hunit
+                     , blaze-svg
   default-language:    Haskell2010
 
 executable combinators
