@@ -68,6 +68,22 @@ main = do
           ("F", "F + f - F F + F + F F + F f + F F - f + F F - F - F F - F f - F F F")
         ]
 
+  writeFile "output/koch-tiles.svg" $ generateSvg 90.0 $
+      stepN 3 (lword "F - F - F - F") $ mkProductions [
+          ("F", "F F - F + F - F - F F")
+        ]
+
+  writeFile "output/koch-spiral.svg" $ generateSvg 90.0 $
+      stepN 4 (lword "F - F - F - F") $ mkProductions [
+          ("F", "F - F + F - F - F")
+        ]
+
+  writeFile "output/dragon-curve.svg" $ generateSvg 90.0 $
+      stepN 9 (lword "F◀") $ mkProductions [
+          ("F◀", "F◀ + F▶ +"),
+          ("F▶", "- F◀ - F▶")
+        ]
+
 type Point = (Double, Double)
 
 data Instruction = MovePenDown Point | MovePenUp Point
@@ -91,12 +107,18 @@ generateSvg theta (LWord ls) = renderSvg svgDoc
     svgDoc =
       let
         ((minX, minY), (maxX, maxY)) = extrude 0.1 (bounds is)
+        aspect = (maxX - minX) / (maxY - minY)
       in
-      S.docTypeSvg ! A.version "1.1" ! A.width "500" ! A.height "500" ! A.viewbox (S.toValue . intercalate " " . map show $ [minX, minY, maxX - minX, maxY - minY]) $ do
-        S.g $ do
-          S.rect ! A.x (S.toValue minX) ! A.y (S.toValue minY) ! A.width (S.toValue $ maxX - minX) ! A.height (S.toValue $ maxY - minY) ! A.fill "#CBD4C2"
-        S.g $ do
-          S.path ! A.d turtleToPath ! A.style "stroke-linecap:square;stroke:#50514F;stroke-width:0.2px;fill:none"
+      S.docTypeSvg
+        ! A.version "1.1"
+        ! A.width (S.toValue $ 500 * aspect)
+        ! A.height "500"
+        ! A.viewbox (S.toValue . intercalate " " . map show $ [minX, minY, maxX - minX, maxY - minY])
+        $ do
+          S.g $ do
+            S.rect ! A.x (S.toValue minX) ! A.y (S.toValue minY) ! A.width (S.toValue $ maxX - minX) ! A.height (S.toValue $ maxY - minY) ! A.fill "#CBD4C2"
+          S.g $ do
+            S.path ! A.d turtleToPath ! A.style "stroke-linecap:square;stroke:#50514F;stroke-width:0.2px;fill:none"
 
     turtleToPath :: S.AttributeValue
     turtleToPath = mkPath $ do
@@ -124,7 +146,7 @@ toCoords (MovePenUp c) = c
 toPath thetaRads ls = catMaybes $ evalState (mapM f ls) 0
   where
     f :: Letter -> State Double (Maybe Instruction)
-    f (Letter "F") = do
+    f (Letter ('F':_)) = do
       heading <- get
       return . Just $ MovePenDown (cos heading, sin heading)
     f (Letter "f") = do
