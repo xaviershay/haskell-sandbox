@@ -3,6 +3,7 @@
 
 module Main where
 
+import System.Directory (createDirectory, removeDirectoryRecursive)
 import Debug.Trace
 import Data.Maybe (catMaybes)
 import Control.Monad (forM_, foldM, guard)
@@ -13,6 +14,7 @@ import System.Random
 import System.Random.Stateful
 import Test.Tasty
 import Test.Tasty.HUnit
+import Data.IORef
 
 import Linear.V2
 import Linear.V3
@@ -111,13 +113,11 @@ data Productions = Productions {
 headMaybe (x:_) = Just x
 headMaybe [] = Nothing
 
-extractPres word ignores =
-  let f = filter (\x -> not $ x `elem` ignores) in
-  reverse . map (headMaybe . reverse . f) . map reverse . tails . reverse $ word
-
 extractPosts word ignores =
   let f = filter (\x -> not $ x `elem` ignores) in
   map (headMaybe . f) . drop 1 . tails $ word
+
+extractPres word = reverse . extractPosts (reverse word)
 
 step :: StatefulGen g m => LWord -> Productions -> g -> m LWord
 step (LWord axiom) productions gen = do
@@ -132,12 +132,35 @@ stepNM 0 axiom _ _ = return axiom
 stepNM n axiom rules gen = do
   word <- step axiom rules gen
 
+  -- traceM . show $ word
   stepNM (n - 1) word rules gen
 
 stepN :: RandomGen g => g -> Int -> LWord -> Productions -> LWord
 stepN gen n axiom rules = fst $ runStateGen gen (stepNM n axiom rules)
 
-runSystem :: String -> Int -> Double -> String -> [(String, String)] -> IO ()
+runSystemDebug :: String -> Int -> Double -> String -> [(String, String)] -> IO ()
+runSystemDebug name n theta axiom ps = do
+  let gen = mkStdGen 42
+  let LWord word = stepN gen n (lword axiom) (mkProductions ps)
+  let debugWords = map LWord . drop 1 . map reverse . reverse . tails . reverse $ word
+  let baseDir = "output/" <> name
+
+  contentVar <- newIORef ""
+
+  removeDirectoryRecursive baseDir
+  createDirectory baseDir
+  forM_ (zip debugWords [1..]) $ \(w, i) -> do
+    let content = generateSvg projectPathOrtho theta w
+    lastContent <- readIORef contentVar
+
+    traceM $ (show i <> ": " <> show w)
+    if content /= lastContent then
+      writeFile (baseDir <> "/" <> show i <> ".svg") content
+    else
+      return ()
+
+    writeIORef contentVar content
+
 runSystem name n theta axiom ps = do
   let gen = mkStdGen 42
   writeFile ("output/" <> name <> ".svg")
@@ -159,10 +182,44 @@ runSystem3D name n theta axiom ps = do
     $ generateSvg projectPathIso theta
     $ stepN gen n (lword axiom) (mkProductions ps)
 
+singleCharWord = intercalate " " . fmap pure
+
 main2 = defaultMain tests
 main = do
+  runSystem "penrose" 5 36 (singleCharWord "[N]++[N]++[N]++[N]++[N]")
+    [ ("M", singleCharWord "OF++PF----NF[-OF----MF]++")
+    , ("N", singleCharWord "+OF--PF[---MF--NF]+")
+    , ("O", singleCharWord "-MF++NF[+++OF++PF]-")
+    , ("P", singleCharWord "--OF++++MF[+PF++++NF]--NF")
+    , ("F", "")
+    ]
+  guard False
+
+  -- One suspicion for why these don't work is the angle alternation:
+  --
+  --    "According to the original interpretation, consecutive branches are
+  --    issued alternately to the left and right, whereas turtle interpretation
+  --    requires explicit specification of branching angles within the L-system
+  --      - p33
+  --
+  -- For further investigation, a thought: if ignores were per rule, could
+  -- achieve this with something like "-" < "-" => "+" (ignore NOT +-)
+  runSystem2 "branching-7" 30 22.5 "F 1 F 1 F 1"
+    $ withIgnore "F + - [ ]"
+    $ productions
+      [ ("0" <| match "0" |> "0", "0")
+      , ("0" <| match "0" |> "1", "1 [ + F 1 F 1 ]")
+      , ("0" <| match "1" |> "0", "1")
+      , ("0" <| match "1" |> "1", "1")
+      , ("1" <| match "0" |> "0", "0")
+      , ("1" <| match "0" |> "1", "1 F 1")
+      , ("1" <| match "1" |> "0", "0")
+      , ("1" <| match "1" |> "1", "0")
+      , (match "+", "-")
+      , (match "-", "+")
+      ]
   runSystem2 "branching-8" 30 22.5 "F 1 F 1 F 1"
-    $ withIgnore "F + -"
+    $ withIgnore "F + - [ ]"
     $ productions
       [ ("0" <| match "0" |> "0", "1")
       , ("0" <| match "0" |> "1", "1 [ - F 1 F 1 ]")
@@ -175,7 +232,6 @@ main = do
       , (match "+", "-")
       , (match "-", "+")
       ]
-  guard False
   runSystem "stochastic" 5 20 "S"
     [ ("S", "S [ / / & & L ] [ / / ^ ^ L ] F S")
     , ("S", "S F S")
@@ -309,7 +365,7 @@ generateSvg projectF theta (LWord ls) = renderSvg svgDoc
                       case i of
                         MovePenDown (V2 x y) -> l x y
                         MovePenUp (V2 x y) -> m x y)
-                
+
 
     turtleToPath :: S.AttributeValue
     turtleToPath = mkPath $ do
@@ -393,7 +449,7 @@ initialTurtle = TurtleState {
   position = V3 0 0 0,
   color = 0
 }
- 
+
 toPath thetaRads ls = concat . catMaybes $ evalState (mapM f ls) [initialTurtle]
   where
     f :: Letter -> State [TurtleState] (Maybe [Instruction Point])
@@ -506,7 +562,7 @@ tests = let gen = mkStdGen 42 in testGroup "L-Systems"
       $ (lword "a a b") @=?
       (stepN gen 2 (lword "b a a")
       $ productions
-          [ 
+          [
            ("b" <| match "a", "b")
           , (mkRule "b", "a")
           ]

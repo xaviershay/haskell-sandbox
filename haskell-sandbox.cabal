@@ -153,6 +153,7 @@ executable lsystem
                      , blaze-svg
                      , linear
                      , random
+                     , directory
   default-language:    Haskell2010
 
 executable combinators
