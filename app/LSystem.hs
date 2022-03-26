@@ -357,8 +357,20 @@ runSystem3D name n theta axiom ps = do
 
 singleCharWord = intercalate " " . fmap pure
 
-main = defaultMain tests
-main2 = do
+main2 = defaultMain tests
+main = do
+  runSystem2 "parametric-1" 6 90 "F(1)"
+    $ withDefines
+        [ ("c", "1")
+        , ("p", "0.3")
+        , ("q", "c - p")
+        , ("h", "(p * q) ^ 0.5")
+        ]
+    $ productions
+        [ (match "F(x)", "F(x * p) + F(x * h) - - F(x * h) + F(x * q)")
+        ]
+  guard False
+
   runSystem "penrose" 4 36 (singleCharWord "[N]++[N]++[N]++[N]++[N]")
     [ ("M", singleCharWord "OF++PF----NF[-OF----MF]++")
     , ("N", singleCharWord "+OF--PF[---MF--NF]+")
