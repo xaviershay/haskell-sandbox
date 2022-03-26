@@ -2,8 +2,9 @@
 
 module Main where
 
+import Debug.Trace
 import Data.Maybe (catMaybes)
-import Control.Monad (forM_, foldM)
+import Control.Monad (forM_, foldM, guard)
 import Control.Monad.State (State(..), runState, modify, evalState, get, gets)
 import Data.List (intercalate)
 import Data.Monoid ((<>))
@@ -73,14 +74,26 @@ stepN n axiom rules = stepN (n - 1) (step axiom rules) rules
 
 
 runSystem :: String -> Int -> Double -> String -> [(String, String)] -> IO ()
-
 runSystem name n theta axiom ps =
   writeFile ("output/" <> name <> ".svg")
-    $ generateSvg theta
+    $ generateSvg projectPathOrtho theta
+    $ stepN n (lword axiom) (mkProductions ps)
+
+runSystem3D :: String -> Int -> Double -> String -> [(String, String)] -> IO ()
+runSystem3D name n theta axiom ps =
+  writeFile ("output/" <> name <> ".svg")
+    $ generateSvg projectPathIso theta
     $ stepN n (lword axiom) (mkProductions ps)
 
 --main = defaultMain tests
 main = do
+  runSystem3D "hilbert" 3 90 "A" [
+      ("A", "B - F + C F C + F - D & F ^ D - F + & & C F C + F + B / /"),
+      ("B", "A & F ^ C F B ^ F ^ D ^ ^ - F - D ^ | F ^ B | F C ^ F ^ A / /"),
+      ("C", "| D ^ | F ^ B - F + C ^ F ^ A & & F A & F ^ C + F + B ^ F ^ D / /"),
+      ("D", "| C F B - F + B | F A & F ^ A & & F B - F + B | F C / /")
+    ]
+
   runSystem "koch-island" 3 90.0 "F - F - F - F" [
       ("F", "F - F + F + F F - F - F + F")
     ]
@@ -137,7 +150,7 @@ main = do
 type Point = V3 Double
 type ProjectedPoint = V2 Double
 
-data Instruction a = MovePenDown a | MovePenUp a
+data Instruction a = MovePenDown a | MovePenUp a deriving (Show)
 
 extrude :: Double -> (ProjectedPoint, ProjectedPoint) -> (ProjectedPoint, ProjectedPoint)
 extrude t (V2 x1 y1, V2 x2 y2) =
@@ -148,11 +161,11 @@ extrude t (V2 x1 y1, V2 x2 y2) =
 
     ( mkVec2 (x1 - sx) (y1 - sy), mkVec2 (x2 + sx) (y2 + sy))
 
-generateSvg :: Double -> LWord -> String
-generateSvg theta (LWord ls) = renderSvg svgDoc
+generateSvg projectF theta (LWord ls) = renderSvg svgDoc
   where
     thetaRads = theta / 180.0 * pi
-    is = projectPathOrtho $ toPath thetaRads ls
+    unprojected = toPath thetaRads ls
+    is = projectF unprojected
 
     svgDoc :: S.Svg
     svgDoc =
@@ -215,17 +228,32 @@ mkVec3 = V3
 
 zeroV = V3 0 0 0
 
-toPath thetaRads ls = catMaybes $ evalState (mapM f ls) [(270 / 180 * pi, zeroV)]
+rotateU a = V3
+  (V3 (cos a) (sin a) 0)
+  (V3 ((-1) * (sin a)) (cos a) 0)
+  (V3 0 0 1)
+
+rotateL a = V3
+  (V3 (cos a) 0 (sin a * (-1)))
+  (V3 0 1 0)
+  (V3 (sin a) 0 (cos a))
+
+rotateH a = V3
+  (V3 1 0 0)
+  (V3 0 (cos a) (sin a * (-1)))
+  (V3 0 (sin a) (cos a))
+
+toPath thetaRads ls = catMaybes $ evalState (mapM f ls) [(rotateU $ 90 / 180 * pi, zeroV)]
   where
-    f :: Letter -> State [(Double, Point)] (Maybe (Instruction Point))
+    f :: Letter -> State [(V3 (V3 Double), Point)] (Maybe (Instruction Point))
     f (Letter ('F':_)) = do
-      heading <- gets (fst . head)
-      let dv = mkVec3 (cos heading) (sin heading) 0
+      rv <- gets (fst . head)
+      let dv = rv !* (mkVec3 1 0 0)
       modify (\((h, v):rest) -> ((h, v + dv):rest))
       return . Just $ MovePenDown dv
     f (Letter "f") = do
-      heading <- gets (fst . head)
-      let dv = mkVec3 (cos heading) (sin heading) 0
+      rv <- gets (fst . head)
+      let dv = rv !* (mkVec3 1 0 0)
       modify (\((h, v):rest) -> ((h, v + dv):rest))
       return . Just $ MovePenUp dv
     f (Letter "[") = do
@@ -238,12 +266,28 @@ toPath thetaRads ls = catMaybes $ evalState (mapM f ls) [(270 / 180 * pi, zeroV)
 
       return . Just $ MovePenUp (v2 - v1)
     f (Letter "+") = do
-      modify (\((h, p):rest) -> ((h + thetaRads, p):rest))
+      modify (\((h, p):rest) -> ((h !*! rotateU thetaRads, p):rest))
       return Nothing
     f (Letter "-") = do
-      modify (\((h, p):rest) -> ((h - thetaRads, p):rest))
+      modify (\((h, p):rest) -> ((h !*! rotateU (-thetaRads), p):rest))
+      return Nothing
+    f (Letter "&") = do
+      modify (\((h, p):rest) -> ((h !*! rotateL (thetaRads), p):rest))
+      return Nothing
+    f (Letter "^") = do
+      modify (\((h, p):rest) -> ((h !*! rotateL (-thetaRads), p):rest))
+      return Nothing
+    f (Letter "\\") = do
+      modify (\((h, p):rest) -> ((h !*! rotateH (thetaRads), p):rest))
+      return Nothing
+    f (Letter "/") = do
+      modify (\((h, p):rest) -> ((h !*! rotateH (-thetaRads), p):rest))
+      return Nothing
+    f (Letter "|") = do
+      modify (\((h, p):rest) -> ((h !*! rotateU pi, p):rest))
       return Nothing
     f _ = return Nothing
+    -- f unknown = error $ "unimplemented: " <> show unknown
 
 mkProductions :: [(String, String)] -> [Production]
 mkProductions template = map (\(l, w) -> Production {
