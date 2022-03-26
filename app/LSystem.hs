@@ -7,7 +7,7 @@ import Debug.Trace
 import Data.Maybe (catMaybes)
 import Control.Monad (forM_, foldM, guard)
 import Control.Monad.State (State(..), runState, modify, evalState, get, gets)
-import Data.List (intercalate)
+import Data.List (intercalate, tails)
 import Data.Monoid ((<>))
 import System.Random
 import System.Random.Stateful
@@ -94,29 +94,47 @@ type LetterContext = ((Letter, Maybe Letter), Maybe Letter)
 identityProduction :: LetterContext -> Production
 identityProduction ((Letter l, _), _) = Production { prodRule = mkRule l, replacement = LWord [Letter l] }
 
-matchProduction :: StatefulGen g m => [Production] -> g -> LetterContext -> m Production
+matchProduction :: StatefulGen g m => Productions -> g -> LetterContext -> m Production
 matchProduction ps gen context  =
-  case filter (\p -> prodRule p `applyRule` context) ps of
+  case filter (\p -> prodRule p `applyRule` context) (prodsRules ps) of
     [x] -> return $ x
     []  -> return $ identityProduction context
     xs  -> do
       i <- uniformRM (0, length xs - 1) gen
       return $ xs !! i
 
-step :: StatefulGen g m => LWord -> [Production] -> g -> m LWord
+data Productions = Productions {
+  prodsRules :: [Production],
+  prodsIgnore :: [Letter]
+}
+
+headMaybe (x:_) = Just x
+headMaybe [] = Nothing
+
+extractPres word ignores =
+  let f = filter (\x -> not $ x `elem` ignores) in
+  reverse . map (headMaybe . reverse . f) . map reverse . tails . reverse $ word
+
+extractPosts word ignores =
+  let f = filter (\x -> not $ x `elem` ignores) in
+  map (headMaybe . f) . drop 1 . tails $ word
+
+step :: StatefulGen g m => LWord -> Productions -> g -> m LWord
 step (LWord axiom) productions gen = do
-  let axiomWithContext = zip (zip axiom (Nothing:(map Just axiom))) ((map Just . drop 1 $ axiom) <> [Nothing])
+  let axiomWithContext = zip
+        (zip axiom (extractPres axiom $ prodsIgnore productions))
+        (extractPosts axiom $ prodsIgnore productions)
   parts <- mapM (matchProduction productions gen) axiomWithContext
   return $ foldl (<>) mempty $ map replacement parts
 
-stepNM :: StatefulGen g m => Int -> LWord -> [Production] -> g -> m LWord
+stepNM :: StatefulGen g m => Int -> LWord -> Productions -> g -> m LWord
 stepNM 0 axiom _ _ = return axiom
 stepNM n axiom rules gen = do
   word <- step axiom rules gen
 
   stepNM (n - 1) word rules gen
 
-stepN :: RandomGen g => g -> Int -> LWord -> [Production] -> LWord
+stepN :: RandomGen g => g -> Int -> LWord -> Productions -> LWord
 stepN gen n axiom rules = fst $ runStateGen gen (stepNM n axiom rules)
 
 runSystem :: String -> Int -> Double -> String -> [(String, String)] -> IO ()
@@ -126,6 +144,14 @@ runSystem name n theta axiom ps = do
     $ generateSvg projectPathOrtho theta
     $ stepN gen n (lword axiom) (mkProductions ps)
 
+runSystem2 name n theta axiom ps = do
+  let gen = mkStdGen 42
+  writeFile ("output/" <> name <> ".svg")
+    $ generateSvg projectPathOrtho theta
+    $ stepN gen n (lword axiom) ps
+
+ignore = id
+
 runSystem3D :: String -> Int -> Double -> String -> [(String, String)] -> IO ()
 runSystem3D name n theta axiom ps = do
   let gen = mkStdGen 42
@@ -133,8 +159,23 @@ runSystem3D name n theta axiom ps = do
     $ generateSvg projectPathIso theta
     $ stepN gen n (lword axiom) (mkProductions ps)
 
-main = defaultMain tests
-main2 = do
+main2 = defaultMain tests
+main = do
+  runSystem2 "branching-8" 30 22.5 "F 1 F 1 F 1"
+    $ withIgnore "F + -"
+    $ productions
+      [ ("0" <| match "0" |> "0", "1")
+      , ("0" <| match "0" |> "1", "1 [ - F 1 F 1 ]")
+      , ("0" <| match "1" |> "0", "1")
+      , ("0" <| match "1" |> "1", "1")
+      , ("1" <| match "0" |> "0", "0")
+      , ("1" <| match "0" |> "1", "1 F 1")
+      , ("1" <| match "1" |> "0", "1")
+      , ("1" <| match "1" |> "1", "0")
+      , (match "+", "-")
+      , (match "-", "+")
+      ]
+  guard False
   runSystem "stochastic" 5 20 "S"
     [ ("S", "S [ / / & & L ] [ / / ^ ^ L ] F S")
     , ("S", "S F S")
@@ -142,7 +183,6 @@ main2 = do
     , ("L", "[ ' F ]")
     ]
 
-  guard False
   runSystem3D "plant" 4 18 "P"
     [ ("P", "I + [ P + Fl ] - - / / [ - - L ] I [ + + L ] - [ P Fl ] + + P Fl")
     , ("I", "F S [ / / & & L ] [ / / ^ ^ L ] F S")
@@ -410,17 +450,28 @@ modifyP m = modify (\(t:ts) -> (t { position = position t + m }:ts))
 modifyR m = modify (\(t:ts) -> (t { rotateM = rotateM t !*! m }:ts))
 modifyC m = modify (\(t:ts) -> (t { color = m (color t) }:ts))
 
-mkProductions :: [(String, String)] -> [Production]
-mkProductions template = map (\(l, w) -> Production {
-  prodRule = mkRule l,
-  replacement = lword w
-}) template
+mkProductions :: [(String, String)] -> Productions
+mkProductions template = Productions {
+  prodsRules = map (\(l, w) -> Production {
+            prodRule = mkRule l,
+            replacement = lword w
+          }) template,
+  prodsIgnore = []
+}
 
-mkProductions2 :: [(MatchRule, String)] -> [Production]
-mkProductions2 template = map (\(r, w) -> Production {
-  prodRule = r,
-  replacement = lword w
-}) template
+mkProductions2 :: [(MatchRule, String)] -> Productions
+mkProductions2 template = Productions {
+  prodsRules = map (\(r, w) -> Production {
+            prodRule = r,
+            replacement = lword w
+          }) template,
+  prodsIgnore = []
+}
+
+withIgnore :: String -> Productions -> Productions
+
+withIgnore list ps = ps { prodsIgnore = map Letter $ words list }
+productions = mkProductions2
 
 tests = let gen = mkStdGen 42 in testGroup "L-Systems"
   [ testGroup "Deterministic & Context-free (DOL)"
@@ -454,7 +505,7 @@ tests = let gen = mkStdGen 42 in testGroup "L-Systems"
     [ testCase "Trivial pre-condition"
       $ (lword "a a b") @=?
       (stepN gen 2 (lword "b a a")
-      $ mkProductions2
+      $ productions
           [ 
            ("b" <| match "a", "b")
           , (mkRule "b", "a")
@@ -463,7 +514,15 @@ tests = let gen = mkStdGen 42 in testGroup "L-Systems"
     , testCase "Trivial post-condition"
       $ (lword "b a a") @=?
       (stepN gen 2 (lword "a a b")
-      $ mkProductions2
+      $ productions
+          [ (match "a" |> "b", "b")
+          , (match "b", "a")
+          ]
+          )
+    , testCase "Trivial ignore"
+      $ (lword "b a + - a") @=?
+      (stepN gen 2 (lword "a a + - b")
+      $ withIgnore "+ -" $ productions
           [ (match "a" |> "b", "b")
           , (match "b", "a")
           ]
