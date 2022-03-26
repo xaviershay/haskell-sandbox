@@ -20,7 +20,8 @@ import Linear.Matrix
 import Text.Blaze.Svg11 ((!), mkPath, rotate, lr, mr, l, m)
 import qualified Text.Blaze.Svg11 as S
 import qualified Text.Blaze.Svg11.Attributes as A
-import Text.Blaze.Svg.Renderer.String (renderSvg)
+--import Text.Blaze.Svg.Renderer.String (renderSvg)
+import Text.Blaze.Svg.Renderer.Pretty (renderSvg)
 
 isoProjection = (1 / sqrt 6) * V3
   (V3 (sqrt 3) 0 ((-1) * sqrt 3))
@@ -88,14 +89,15 @@ runSystem3D name n theta axiom ps =
 
 --main = defaultMain tests
 main = do
-  runSystem3D "plant" 5 18 "P" [
-      ("P", "I + [ P + F ] - - / / [ - - L ] I [ + + L ] - [ P F ] + + P F"),
-      ("I", "F S [ / / & & L ] [ / / ^ ^ L ] F S"),
-      ("S", "S F S"),
-      ("L", "[ ' { + F - F F - F + | + F - F F - F } ]")
-      -- ("F", "[ & & & C ' / W / / / / W / / / / W / / / / W / / / / W"),
-      -- ("C", "F F"),
-      -- ("W", "[ ' ^ F ] [ { & & & & - f + f | - f + f } ]")
+  runSystem3D "plant" 4 18 "P"
+    [ ("P", "I + [ P + Fl ] - - / / [ - - L ] I [ + + L ] - [ P Fl ] + + P Fl")
+    , ("I", "F S [ / / & & L ] [ / / ^ ^ L ] F S")
+    , ("S", "S F S")
+    --, ("L", "[ ' { + F - F F - F + | + F - F F - F } ]")
+    , ("L", "[ ' { + F - F - F + | + F - F - F } ]")
+    , ("Fl", "[ & & & C ' / W / / / / W / / / / W / / / / W / / / / W ]")
+    , ("C", "F F")
+    , ("W", "[ ' ^ F ] [ { & & & & - F + F | - F + F } ]")
     ]
 
   runSystem "koch-island" 3 90.0 "F - F - F - F" [
@@ -161,7 +163,17 @@ main = do
 type Point = V3 Double
 type ProjectedPoint = V2 Double
 
-data Instruction a = MovePenDown a | MovePenUp a | ChangeColor String deriving (Show)
+data Instruction a = MovePenDown a | MovePenUp a | ChangeColor Int deriving (Show)
+
+colors :: [String]
+colors =
+  [ "#50514F"
+  , "#109648"
+  , "#CB793A"
+  , "#8D91C7"
+  , "#000000"
+  , "#ffff00"
+  ]
 
 extrude :: Double -> (ProjectedPoint, ProjectedPoint) -> (ProjectedPoint, ProjectedPoint)
 extrude t (V2 x1 y1, V2 x2 y2) =
@@ -176,8 +188,8 @@ generateSvg projectF theta (LWord ls) = renderSvg svgDoc
   where
     thetaRads = theta / 180.0 * pi
     unprojected = toPath thetaRads ls
-    --is = projectF (Debug.Trace.trace (show unprojected) unprojected)
     is = projectF unprojected
+    --is = projectF unprojected
 
     svgDoc :: S.Svg
     svgDoc =
@@ -193,9 +205,9 @@ generateSvg projectF theta (LWord ls) = renderSvg svgDoc
         $ do
           S.g $ do
             S.rect ! A.x (S.toValue minX) ! A.y (S.toValue minY) ! A.width (S.toValue $ maxX - minX) ! A.height (S.toValue $ maxY - minY) ! A.fill "#CBD4C2"
-            forM_ (t is) $ \(style, is') -> do
+            forM_ (t is) $ \(colorIndex, is') -> do
               S.path
-                ! A.style (S.toValue $ "stroke-linecap:square;stroke-width:0.2px;fill:none;" <> style)
+                ! A.style (S.toValue $ "stroke-linecap:square;stroke-width:0.1px;fill:none;stroke:" <> (colors !! (colorIndex `mod` length colors)))
                 ! A.d (mkPath $ do
                     let (MovePenUp (V2 x y):t) = reverse is'
                     m x y
@@ -214,14 +226,14 @@ generateSvg projectF theta (LWord ls) = renderSvg svgDoc
           MovePenUp (V2 x y) -> mr x y
           ChangeColor _ -> return ()
 
-t :: [Instruction ProjectedPoint] -> [(String, [Instruction ProjectedPoint])]
-t is = reverse $ foldl f ([("stroke:#50514F;", [MovePenUp (V2 0 0)])]) is
+t :: [Instruction ProjectedPoint] -> [(Int, [Instruction ProjectedPoint])]
+t is = reverse $ foldl f ([(0, [MovePenUp (V2 0 0)])]) is
   where
     initPath ((MovePenDown v):_) = [MovePenUp v]
     initPath ((MovePenUp v):_) = [MovePenUp v]
     initPath _ = []
     f ((style, is):rest) i = case i of
-                                  ChangeColor s -> ("stroke:" <> s, initPath is):(style, is):rest
+                                  ChangeColor s -> (s, initPath is):(style, is):rest
                                   x -> (style, x:is):rest
 
 bounds is =
@@ -240,7 +252,7 @@ projectPathIso :: [Instruction Point] -> [Instruction ProjectedPoint]
 projectPathIso = map f
   where
     f (MovePenDown x) = MovePenDown $ p x
-    f (MovePenUp x) = MovePenDown $ p x
+    f (MovePenUp x) = MovePenUp $ p x
     f (ChangeColor x) = ChangeColor x
     p v3 = let (V3 x y _) = orthoProjection !* (isoProjection !* v3) in V2 x y
 
@@ -248,7 +260,7 @@ projectPathOrtho :: [Instruction Point] -> [Instruction ProjectedPoint]
 projectPathOrtho = map f
   where
     f (MovePenDown x) = MovePenDown $ p x
-    f (MovePenUp x) = MovePenDown $ p x
+    f (MovePenUp x) = MovePenUp $ p x
     f (ChangeColor x) = ChangeColor x
     p v3 = let (V3 x y _) = orthoProjection !* v3 in V2 x y
 
@@ -279,13 +291,13 @@ rotateH a = V3
 data TurtleState = TurtleState {
   rotateM :: V3 Point,
   position :: Point,
-  color :: String
+  color :: Int
 }
 
 initialTurtle = TurtleState {
   rotateM = rotateU $ 90 / 180 * pi,
   position = V3 0 0 0,
-  color = "#50514F"
+  color = 0
 }
  
 toPath thetaRads ls = concat . catMaybes $ evalState (mapM f ls) [initialTurtle]
@@ -334,12 +346,15 @@ toPath thetaRads ls = concat . catMaybes $ evalState (mapM f ls) [initialTurtle]
       modifyR (rotateU pi)
       return Nothing
     f (Letter "'") = do
-      return . Just $ [ChangeColor "#00aa00"]
+      modifyC (+ 1)
+      c <- gets (color . head)
+      return . Just $ [ChangeColor c]
     f _ = return Nothing
     -- f unknown = error $ "unimplemented: " <> show unknown
 
 modifyP m = modify (\(t:ts) -> (t { position = position t + m }:ts))
 modifyR m = modify (\(t:ts) -> (t { rotateM = rotateM t !*! m }:ts))
+modifyC m = modify (\(t:ts) -> (t { color = m (color t) }:ts))
 
 mkProductions :: [(String, String)] -> [Production]
 mkProductions template = map (\(l, w) -> Production {
