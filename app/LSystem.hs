@@ -111,9 +111,15 @@ parseUnsafePattern input =
     Right x -> x
     Left x -> error $ show x
 
-parseUnsafeExpr :: String -> LWord LetterExpr
-parseUnsafeExpr input =
+parseUnsafeWordExpr :: String -> LWord LetterExpr
+parseUnsafeWordExpr input =
   case P.parse pwordExprExpr input input of
+    Right x -> x
+    Left x -> error $ show x
+
+parseUnsafeExpr :: String -> Expr
+parseUnsafeExpr input =
+  case P.parse exprParser input input of
     Right x -> x
     Left x -> error $ show x
 
@@ -139,6 +145,13 @@ data Term2 = Sum | Product | Fraction | Exponent
 
 data Env = Env (M.HashMap String Expr)
   deriving (Show)
+
+instance Semigroup Env where
+  Env a <> Env b = Env (a <> b)
+
+instance Monoid Env where
+  mempty = Env mempty
+
 data Expr =
   ExprConst Double
   | ExprVar String
@@ -214,7 +227,7 @@ envFromContext p ((l1, l2), l3) =
   let
     rule = prodRule p
     paramLabels = letterParams . ruleLetter $ rule
-    paramValues = map ExprConst . letterParams $ l1 -- TODO: Env could just be Double instead of Expr?
+    paramValues = map ExprConst . letterParams $ l1
     xs = zip paramLabels paramValues
   in
   Env $ M.fromList xs
@@ -223,16 +236,24 @@ emptyEnv = Env mempty
 
 matchProduction :: StatefulGen g m => Productions -> g -> LetterContext -> m (Production, Env)
 matchProduction ps gen context  =
+  let buildEnv x = prodsDefines ps <> envFromContext x context in
   case filter (\p -> prodRule p `applyRule` context) (prodsRules ps) of
-    [x] -> return $ (x, envFromContext x context)
+    [x] -> return $ (x, buildEnv x)
     []  -> return $ (identityProduction context, emptyEnv)
     xs  -> do
       i <- uniformRM (0, length xs - 1) gen
-      return $ let x = xs !! i in (x, envFromContext x context)
+      return $ let x = xs !! i in (x, buildEnv x)
 
 data Productions = Productions {
   prodsRules :: [Production],
-  prodsIgnore :: [Letter]
+  prodsIgnore :: [Letter],
+  prodsDefines :: Env
+}
+
+emptyProductions = Productions {
+  prodsRules = mempty,
+  prodsIgnore = mempty,
+  prodsDefines = mempty
 }
 
 headMaybe (x:_) = Just x
@@ -336,8 +357,8 @@ runSystem3D name n theta axiom ps = do
 
 singleCharWord = intercalate " " . fmap pure
 
-main2 = defaultMain tests
-main = do
+main = defaultMain tests
+main2 = do
   runSystem "penrose" 4 36 (singleCharWord "[N]++[N]++[N]++[N]++[N]")
     [ ("M", singleCharWord "OF++PF----NF[-OF----MF]++")
     , ("N", singleCharWord "+OF--PF[---MF--NF]+")
@@ -665,26 +686,25 @@ modifyR m = modify (\(t:ts) -> (t { rotateM = rotateM t !*! m }:ts))
 modifyC m = modify (\(t:ts) -> (t { color = m (color t) }:ts))
 
 mkProductions :: [(String, String)] -> Productions
-mkProductions template = Productions {
+mkProductions template = emptyProductions {
   prodsRules = map (\(l, w) -> Production {
             prodRule = mkRule l,
-            replacement = parseUnsafeExpr w
-          }) template,
-  prodsIgnore = []
+            replacement = parseUnsafeWordExpr w
+          }) template
 }
 
 mkProductions2 :: [(MatchRule, String)] -> Productions
-mkProductions2 template = Productions {
+mkProductions2 template = emptyProductions {
   prodsRules = map (\(r, w) -> Production {
             prodRule = r,
-            replacement = parseUnsafeExpr w
-          }) template,
-  prodsIgnore = []
+            replacement = parseUnsafeWordExpr w
+          }) template
 }
 
 withIgnore :: String -> Productions -> Productions
 
 withIgnore list ps = ps { prodsIgnore = map letter $ words list }
+withDefines list ps = ps { prodsDefines = Env . M.map parseUnsafeExpr . M.fromList $ list }
 productions = mkProductions2
 
 tests = let gen = mkStdGen 42 in testGroup "L-Systems"
@@ -758,6 +778,11 @@ tests = let gen = mkStdGen 42 in testGroup "L-Systems"
       (stepN gen 1 (parseUnsafe "F(1)") $ productions
         [ (match "F(x)", "F((x*(x+9)/5)^2)")
         ])
+    , testCase "Defines"
+      $ (parseUnsafe "F(4)") @=?
+      (stepN gen 2 (parseUnsafe "F(1)") $ withDefines [("y", "x*2")] $ productions
+        [ (match "F(x)", "F(y)")
+        ])
     , testGroup "Parsing"
       [ testCase "One param"
           $ LWord [mkPLetter "F" [3]] @=? (parseUnsafe "F(3)")
@@ -776,25 +801,25 @@ tests = let gen = mkStdGen 42 in testGroup "L-Systems"
       , testCase "Whitespace"
           $ LWord [mkPLetter "F" []] @=? (parseUnsafe "  F  ")
       , testCase "Expressions"
-          $ LWord [mkPLetter "F" [], mkPLetter "+" []] @=? (parseUnsafeExpr "F +")
+          $ LWord [mkPLetter "F" [], mkPLetter "+" []] @=? (parseUnsafeWordExpr "F +")
       , testCase "Addition"
           $ LWord [mkPLetter "F" [ExprOp2 Sum (ExprVar "x") (ExprConst 1)]]
-            @=? (parseUnsafeExpr "F(x+1)")
+            @=? (parseUnsafeWordExpr "F(x+1)")
       , testCase "Subtraction"
           $ LWord [mkPLetter "F" [ExprOp2 Sum (ExprVar "x") (ExprOp2 Product (ExprConst 1) (ExprConst (-1)))]]
-            @=? (parseUnsafeExpr "F(x-1)")
+            @=? (parseUnsafeWordExpr "F(x-1)")
       , testCase "Multiplication"
           $ LWord [mkPLetter "F" [ExprOp2 Product (ExprVar "x") (ExprConst 1)]]
-            @=? (parseUnsafeExpr "F(x*1)")
+            @=? (parseUnsafeWordExpr "F(x*1)")
       , testCase "Division"
           $ LWord [mkPLetter "F" [ExprOp2 Fraction (ExprVar "x") (ExprConst 1)]]
-            @=? (parseUnsafeExpr "F(x/1)")
+            @=? (parseUnsafeWordExpr "F(x/1)")
       , testCase "Exponent"
           $ LWord [mkPLetter "F" [ExprOp2 Exponent (ExprVar "x") (ExprConst 1)]]
-            @=? (parseUnsafeExpr "F(x^1)")
+            @=? (parseUnsafeWordExpr "F(x^1)")
       , testCase "Parens"
           $ LWord [mkPLetter "F" [ExprOp2 Sum (ExprVar "x") (ExprVar "x")]]
-            @=? (parseUnsafeExpr "F(((x+x)))")
+            @=? (parseUnsafeWordExpr "F(((x+x)))")
       , testCase "Patterns"
           $ mkPLetter "F" ["x", "y"] @=? (parseUnsafePattern "F(x, y)")
       ]
