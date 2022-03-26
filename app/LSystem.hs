@@ -44,12 +44,12 @@ tests = testGroup "Deterministic & Context-Free (DOL)"
         ("b", "a"),
         ("a", "b a")
       ])
-  , testCase "Anabaena catenula" $ (lword "bl ar bl ar ar bl ar ar") @=?
-      (stepN 4 (lword "ar")
+  , testCase "Anabaena catenula" $ (lword "b◀ a▶ b◀ a▶ a▶ b◀ a▶ a▶") @=?
+      (stepN 4 (lword "a▶")
         $ mkProductions [
-          ("ar", "al br"),
-          ("al", "bl ar"),
-          ("br", "ar"),
-          ("bl", "al")
+          ("a▶", "a◀ b▶"),
+          ("a◀", "b◀ a▶"),
+          ("b▶", "a▶"),
+          ("b◀", "a◀")
         ])
   ]
