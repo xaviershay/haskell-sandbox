@@ -54,17 +54,35 @@ instance Show LWord where
   show (LWord l) = intercalate " " $ map show l
 
 data Production = Production {
-  matchSymbol :: Letter,
+  prodRule :: MatchRule,
   replacement :: LWord
 } deriving (Show)
 
+data MatchRule = MatchRule {
+  ruleLetter :: Letter,
+  ruleLetterPre :: Maybe Letter,
+  ruleLetterPost :: Maybe Letter
+}
+
+instance Show MatchRule where
+  show rule = show (ruleLetter rule)
+
+mkRule letter = MatchRule
+  { ruleLetter = letter
+  , ruleLetterPre = Nothing
+  , ruleLetterPost = Nothing
+  }
+
+applyRule :: MatchRule -> Letter -> Bool
+applyRule r l = ruleLetter r == l
+
 lword = LWord . map Letter . words
 
-identityProduction l = Production { matchSymbol = l, replacement = LWord [l] }
+identityProduction l = Production { prodRule = mkRule l, replacement = LWord [l] }
 
 matchProduction :: StatefulGen g m => [Production] -> g -> Letter -> m Production
 matchProduction ps gen l  =
-  case filter (\p -> matchSymbol p == l) ps of
+  case filter (\p -> prodRule p `applyRule` l) ps of
     [x] -> return $ x
     []  -> return $ identityProduction l
     xs  -> do
@@ -100,8 +118,8 @@ runSystem3D name n theta axiom ps = do
     $ generateSvg projectPathIso theta
     $ stepN gen n (lword axiom) (mkProductions ps)
 
---main = defaultMain tests
-main = do
+main = defaultMain tests
+main2 = do
   runSystem "stochastic" 5 20 "S"
     [ ("S", "S [ / / & & L ] [ / / ^ ^ L ] F S")
     , ("S", "S F S")
@@ -379,36 +397,50 @@ modifyC m = modify (\(t:ts) -> (t { color = m (color t) }:ts))
 
 mkProductions :: [(String, String)] -> [Production]
 mkProductions template = map (\(l, w) -> Production {
-  matchSymbol = Letter l,
+  prodRule = mkRule $ Letter l,
   replacement = lword w
 }) template
 
-tests = let gen = mkStdGen 42 in testGroup "Deterministic & Context-Free (DOL)"
-  [ testCase "Trivial" $ (lword "a b a b a a b a") @=? (stepN gen 5 (lword "b")
-      $ mkProductions [
-        ("b", "a"),
-        ("a", "b a")
-      ])
-  , testCase "Anabaena catenula" $ (lword "b◀ a▶ b◀ a▶ a▶ b◀ a▶ a▶") @=?
-      (stepN gen 4 (lword "a▶")
+tests = let gen = mkStdGen 42 in testGroup "L-Systems"
+  [ testGroup "Deterministic & Context-free (DOL)"
+    [ testCase "Trivial" $ (lword "a b a b a a b a") @=? (stepN gen 5 (lword "b")
         $ mkProductions [
-          ("a▶", "a◀ b▶"),
-          ("a◀", "b◀ a▶"),
-          ("b▶", "a▶"),
-          ("b◀", "a◀")
+          ("b", "a"),
+          ("a", "b a")
         ])
-  , testCase "Koch island"
-      $ (lword "F - F + F + F F - F - F + F - F - F + F + F F - F - F + F - F - F + F + F F - F - F + F - F - F + F + F F - F - F + F") @=?
-      (stepN gen 1 (lword "F - F - F - F")
+    , testCase "Anabaena catenula" $ (lword "b◀ a▶ b◀ a▶ a▶ b◀ a▶ a▶") @=?
+        (stepN gen 4 (lword "a▶")
+          $ mkProductions [
+            ("a▶", "a◀ b▶"),
+            ("a◀", "b◀ a▶"),
+            ("b▶", "a▶"),
+            ("b◀", "a◀")
+          ])
+    , testCase "Koch island"
+        $ (lword "F - F + F + F F - F - F + F - F - F + F + F F - F - F + F - F - F + F + F F - F - F + F - F - F + F + F F - F - F + F") @=?
+        (stepN gen 1 (lword "F - F - F - F")
+          $ mkProductions [
+            ("F", "F - F + F + F F - F - F + F")
+          ])
+    , testCase "Bracketed"
+        $ (lword "F [ + F ] F [ - F ] F") @=?
+        (stepN gen 1 (lword "F")
         $ mkProductions [
-          ("F", "F - F + F + F F - F - F + F")
+          ("F", "F [ + F ] F [ - F ] F")
         ])
-  , testCase "Bracketed"
-      $ (lword "F [ + F ] F [ - F ] F") @=?
-      (stepN gen 1 (lword "F")
-      $ mkProductions [
-        ("F", "F [ + F ] F [ - F ] F")
-      ])
+    ]
+  , testGroup "Context-sensitive"
+    [
+   -- testCase "Trivial"
+   --   $ (lword "a a b") @=?
+   --   (stepN gen 2 (lword "b a a")
+   --   $ mkProductions
+   --       [ 
+   --      -- (Letter "b" :< Letter "a", "b")
+   --      -- , (Letter "b", "a")
+   --       ]
+   --       )
+    ]
   ]
 
 makePath :: S.AttributeValue
