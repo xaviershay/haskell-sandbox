@@ -4,7 +4,7 @@ module Main where
 
 import Data.Maybe (catMaybes)
 import Control.Monad (forM_, foldM)
-import Control.Monad.State (State(..), runState, modify, evalState, get)
+import Control.Monad.State (State(..), runState, modify, evalState, get, gets)
 import Data.List (intercalate)
 import Data.Monoid ((<>))
 import Test.Tasty
@@ -84,6 +84,18 @@ main = do
           ("F▶", "- F◀ - F▶")
         ]
 
+  writeFile "output/gosper-hex-curve.svg" $ generateSvg 60.0 $
+      stepN 4 (lword "FL") $ mkProductions [
+          ("FL", "FL + FR + + FR - FL - - FL FL - FR +"),
+          ("FR", "- FL + FR FR + + FR + FL - - FL - FR")
+        ]
+
+  writeFile "output/branching-1.svg" $ generateSvg 25.7 $
+      (stepN 4 (lword "F")
+      $ mkProductions [
+        ("F", "F [ + F ] F [ - F ] F")
+      ])
+
 type Point = (Double, Double)
 
 data Instruction = MovePenDown Point | MovePenUp Point
@@ -117,7 +129,6 @@ generateSvg theta (LWord ls) = renderSvg svgDoc
         $ do
           S.g $ do
             S.rect ! A.x (S.toValue minX) ! A.y (S.toValue minY) ! A.width (S.toValue $ maxX - minX) ! A.height (S.toValue $ maxY - minY) ! A.fill "#CBD4C2"
-          S.g $ do
             S.path ! A.d turtleToPath ! A.style "stroke-linecap:square;stroke:#50514F;stroke-width:0.2px;fill:none"
 
     turtleToPath :: S.AttributeValue
@@ -143,20 +154,31 @@ bounds is =
 toCoords (MovePenDown c) = c
 toCoords (MovePenUp c) = c
 
-toPath thetaRads ls = catMaybes $ evalState (mapM f ls) 0
+toPath thetaRads ls = catMaybes $ evalState (mapM f ls) [(270 / 180 * pi, (0,0))]
   where
-    f :: Letter -> State Double (Maybe Instruction)
+    f :: Letter -> State [(Double, (Double, Double))] (Maybe Instruction)
     f (Letter ('F':_)) = do
-      heading <- get
+      heading <- gets (fst . head)
+      modify (\((h, (x, y)):rest) -> ((h, (x + cos heading, y + sin heading)):rest))
       return . Just $ MovePenDown (cos heading, sin heading)
     f (Letter "f") = do
-      heading <- get
+      heading <- gets (fst . head)
+      modify (\((h, (x, y)):rest) -> ((h, (x + cos heading, y + sin heading)):rest))
       return . Just $ MovePenUp (cos heading, sin heading)
+    f (Letter "[") = do
+      modify (\(x:xs) -> (x:x:xs))
+      return Nothing
+    f (Letter "]") = do
+      (x1, y1) <- gets (snd . head)
+      modify (\(x:xs) -> xs)
+      (x2, y2) <- gets (snd . head)
+
+      return . Just $ MovePenUp (x2 - x1, y2 - y1)
     f (Letter "+") = do
-      modify ((+) thetaRads)
+      modify (\((h, p):rest) -> ((h + thetaRads, p):rest))
       return Nothing
     f (Letter "-") = do
-      modify (\x -> x - thetaRads)
+      modify (\((h, p):rest) -> ((h - thetaRads, p):rest))
       return Nothing
 
 mkProductions :: [(String, String)] -> [Production]
