@@ -3,6 +3,7 @@
 
 module Main where
 
+import Control.Applicative ((<|>))
 import System.Directory (createDirectory, removeDirectoryRecursive)
 import Debug.Trace
 import Data.Maybe (catMaybes)
@@ -15,6 +16,11 @@ import System.Random.Stateful
 import Test.Tasty
 import Test.Tasty.HUnit
 import Data.IORef
+import qualified Text.Parsec as P
+import Text.Parsec.Expr
+import qualified Text.Parsec.Token    as Tok
+import qualified Text.Parsec.Language as Tok
+
 
 import Linear.V2
 import Linear.V3
@@ -27,6 +33,69 @@ import qualified Text.Blaze.Svg11.Attributes as A
 --import Text.Blaze.Svg.Renderer.String (renderSvg)
 import Text.Blaze.Svg.Renderer.Pretty (renderSvg)
 
+lexer :: Tok.TokenParser ()
+lexer = Tok.makeTokenParser style
+  where
+    style = Tok.emptyDef
+      { Tok.reservedOpNames = ["+", "!", "^", "/", "*"]
+      , Tok.reservedNames   = []
+      , Tok.identStart      = P.letter
+      }
+
+--reservedOp = Tok.reservedOp lexer
+whiteSpace = Tok.whiteSpace lexer
+--
+--termExpr = (parens expr
+--             <|> Const . read <$> many1 (oneOf ['0'..'9']) -- TODO: Decimal
+--             <|> Var . replicate 1 <$> oneOf ['a'..'z']
+--           )) <* whiteSpace
+--
+--table = [ [postfix "!" (Op1 Factorial), series "S", limit "lim", functionExpr, prefix "-" (Op1 Negate) ]
+--        , [binary "^" (Op2 Exponent) AssocLeft ]
+--        , [binary "*" (Op2 Product) AssocLeft, binary "/" (Op2 Fraction) AssocLeft, binary "" (Op2 Product) AssocLeft]
+--        , [binary "+" (Op2 Sum) AssocLeft, binary "-" (\a b -> Op2 Sum a (Op1 Negate b)) AssocLeft ]
+--        ]
+
+
+symbolExpr = P.satisfy (\x -> not $ x `elem` (" ()" :: String))
+
+paramExpr = read <$> P.many1 P.digit
+
+patternExpr = P.many1 symbolExpr
+
+letterExpr paramParser = do
+  symbol <- P.many1 symbolExpr
+  params <- P.try (P.char '(' >> whiteSpace) *> (paramParser <* whiteSpace) `P.sepBy` (P.char ',' >> whiteSpace) <* (P.char ')') <|> pure []
+
+  return $ PLetter {
+    letterSymbol = symbol,
+    letterParams = params
+  }
+
+pwordExpr = LWord <$> (whiteSpace *> P.many1 (letterExpr paramExpr <* whiteSpace))
+
+pwordExprExpr = LWord <$> (whiteSpace *> P.many (letterExpr (fail "unimplemented") <* whiteSpace))
+
+pwordPatternExpr = whiteSpace *> letterExpr patternExpr <* whiteSpace
+
+parseUnsafe :: String -> LWord Letter
+parseUnsafe input =
+  case P.parse pwordExpr input input of
+    Right x -> x
+    Left x -> error $ "error parsing: " <> input
+
+parseUnsafePattern :: String -> LetterPattern
+parseUnsafePattern input =
+  case P.parse pwordPatternExpr input input of
+    Right x -> x
+    Left x -> error $ "error parsing: " <> input
+
+parseUnsafeExpr :: String -> LWord LetterExpr
+parseUnsafeExpr input =
+  case P.parse pwordExprExpr input input of
+    Right x -> x
+    Left x -> error $ "error parsing: " <> input
+
 isoProjection = (1 / sqrt 6) * V3
   (V3 (sqrt 3) 0 ((-1) * sqrt 3))
   (V3 1 2 1)
@@ -37,64 +106,79 @@ orthoProjection = V3
   (V3 0.0 1 0)
   (V3 0.0 0 0)
 
-data Letter = Letter {
-  symbol :: String
+data PLetter a = PLetter {
+  letterSymbol :: String,
+  letterParams :: [a]
 } deriving (Eq)
 
-instance Show Letter where
-  show (Letter x) = x
+plword s = parseUnsafe s
 
-data LWord = LWord [Letter]
+data Expr = Expr
+  deriving (Show, Eq)
+
+type LetterExpr = PLetter Expr
+type Letter = PLetter Double
+type LetterPattern = PLetter String
+
+letter :: String -> Letter
+letter a = PLetter { letterSymbol = a, letterParams = mempty }
+
+instance Show a => Show (PLetter a) where
+  show (PLetter { letterSymbol = s, letterParams = ps }) = s <> if null ps then "" else show ps
+
+data LWord a = LWord [a]
   deriving (Eq)
 
-instance Semigroup LWord where
+instance Semigroup (LWord x) where
   (LWord a) <> (LWord b) = LWord $ a <> b
-instance Monoid LWord where
+instance Monoid (LWord a) where
   mempty = LWord []
 
-instance Show LWord where
+instance Show a => Show (LWord a) where
   show (LWord l) = intercalate " " $ map show l
 
 data Production = Production {
   prodRule :: MatchRule,
-  replacement :: LWord
+  replacement :: LWord (LetterExpr)
 } deriving (Show)
 
 data MatchRule = MatchRule {
-  ruleLetter :: Letter,
-  ruleLetterPre :: Maybe Letter,
-  ruleLetterPost :: Maybe Letter
+  ruleLetter :: LetterPattern,
+  ruleLetterPre :: Maybe LetterPattern,
+  ruleLetterPost :: Maybe LetterPattern
 }
 
 instance Show MatchRule where
   show rule = show (ruleLetter rule) <> " (" <> show (ruleLetterPre rule) <> ", " <> show (ruleLetterPost rule) <> ")"
 
 match = mkRule
-mkRule letter = MatchRule
-  { ruleLetter = Letter letter
+mkRule l = MatchRule
+  { ruleLetter = parseUnsafePattern l
   , ruleLetterPre = Nothing
   , ruleLetterPost = Nothing
   }
 
 applyRule :: MatchRule -> LetterContext -> Bool
 applyRule r ((l, pre), post) =
-  ruleLetter r == l
+  letterSymbol (ruleLetter r) == letterSymbol l
   && case ruleLetterPre r of
        Nothing -> True
-       Just _ -> ruleLetterPre r == pre
+       Just _ -> fmap letterSymbol (ruleLetterPre r) == fmap letterSymbol pre
   && case ruleLetterPost r of
        Nothing -> True
-       Just _ -> ruleLetterPost r == post
+       Just _ -> fmap letterSymbol (ruleLetterPost r) == fmap letterSymbol post
 
-l <| r = r { ruleLetterPre = Just (Letter l) }
-r |> l = r { ruleLetterPost = Just (Letter l) }
+l <| r = r { ruleLetterPre = Just (parseUnsafePattern l) }
+r |> l = r { ruleLetterPost = Just (parseUnsafePattern l) }
 
-lword = LWord . map Letter . words
+lword :: String -> LWord Letter
+lword = LWord . map letter . words
 
 type LetterContext = ((Letter, Maybe Letter), Maybe Letter)
 
+-- TODO: Fix for params
 identityProduction :: LetterContext -> Production
-identityProduction ((Letter l, _), _) = Production { prodRule = mkRule l, replacement = LWord [Letter l] }
+identityProduction ((l, _), _) = Production { prodRule = mkRule (letterSymbol l), replacement = LWord [PLetter { letterSymbol = letterSymbol l, letterParams = []}] }
 
 matchProduction :: StatefulGen g m => Productions -> g -> LetterContext -> m Production
 matchProduction ps gen context  =
@@ -119,15 +203,20 @@ extractPosts word ignores =
 
 extractPres word = reverse . extractPosts (reverse word)
 
-step :: StatefulGen g m => LWord -> Productions -> g -> m LWord
+evalExpr :: LWord LetterExpr -> LWord Letter
+evalExpr (LWord ls) = LWord . map f $ ls
+  where
+    f (PLetter { letterSymbol = s }) = PLetter { letterSymbol = s, letterParams = [] }
+
+step :: StatefulGen g m => (LWord Letter) -> Productions -> g -> m (LWord Letter)
 step (LWord axiom) productions gen = do
   let axiomWithContext = zip
         (zip axiom (extractPres axiom $ prodsIgnore productions))
         (extractPosts axiom $ prodsIgnore productions)
   parts <- mapM (matchProduction productions gen) axiomWithContext
-  return $ foldl (<>) mempty $ map replacement parts
+  return $ evalExpr $ foldl (<>) mempty $ map replacement parts
 
-stepNM :: StatefulGen g m => Int -> LWord -> Productions -> g -> m LWord
+stepNM :: StatefulGen g m => Int -> LWord Letter -> Productions -> g -> m (LWord Letter)
 stepNM 0 axiom _ _ = return axiom
 stepNM n axiom rules gen = do
   word <- step axiom rules gen
@@ -135,7 +224,7 @@ stepNM n axiom rules gen = do
   -- traceM . show $ word
   stepNM (n - 1) word rules gen
 
-stepN :: RandomGen g => g -> Int -> LWord -> Productions -> LWord
+stepN :: RandomGen g => g -> Int -> LWord Letter -> Productions -> LWord Letter
 stepN gen n axiom rules = fst $ runStateGen gen (stepNM n axiom rules)
 
 runSystemDebug :: String -> Int -> Double -> String -> [(String, String)] -> IO ()
@@ -171,7 +260,7 @@ runSystem2 name n theta axiom ps = do
   let gen = mkStdGen 42
   writeFile ("output/" <> name <> ".svg")
     $ generateSvg projectPathOrtho theta
-    $ stepN gen n (lword axiom) ps
+    $ stepN gen n (parseUnsafe axiom) ps
 
 ignore = id
 
@@ -180,20 +269,19 @@ runSystem3D name n theta axiom ps = do
   let gen = mkStdGen 42
   writeFile ("output/" <> name <> ".svg")
     $ generateSvg projectPathIso theta
-    $ stepN gen n (lword axiom) (mkProductions ps)
+    $ stepN gen n (parseUnsafe axiom) (mkProductions ps)
 
 singleCharWord = intercalate " " . fmap pure
 
 main2 = defaultMain tests
 main = do
-  runSystem "penrose" 5 36 (singleCharWord "[N]++[N]++[N]++[N]++[N]")
+  runSystem "penrose" 4 36 (singleCharWord "[N]++[N]++[N]++[N]++[N]")
     [ ("M", singleCharWord "OF++PF----NF[-OF----MF]++")
     , ("N", singleCharWord "+OF--PF[---MF--NF]+")
     , ("O", singleCharWord "-MF++NF[+++OF++PF]-")
     , ("P", singleCharWord "--OF++++MF[+PF++++NF]--NF")
     , ("F", "")
     ]
-  guard False
 
   -- One suspicion for why these don't work is the angle alternation:
   --
@@ -450,52 +538,56 @@ initialTurtle = TurtleState {
   color = 0
 }
 
-toPath thetaRads ls = concat . catMaybes $ evalState (mapM f ls) [initialTurtle]
+toPath :: Double -> [Letter] -> [Instruction Point]
+toPath thetaRads ls = concat . catMaybes $ evalState (mapM fInit ls) [initialTurtle]
   where
-    f :: Letter -> State [TurtleState] (Maybe [Instruction Point])
-    f (Letter ('F':_)) = do
+    fInit :: Letter -> State [TurtleState] (Maybe [Instruction Point])
+    fInit l = f (letterSymbol l)
+
+    f :: String -> State [TurtleState] (Maybe [Instruction Point])
+    f (('F':_)) = do
       rv <- gets (rotateM . head)
       let dv = rv !* (mkVec3 1 0 0)
       modifyP dv
       v <- gets (position . head)
       return . Just $ [MovePenDown v]
-    f (Letter "f") = do
+    f ("f") = do
       rv <- gets (rotateM . head)
       let dv = rv !* (mkVec3 1 0 0)
       modifyP dv
       v <- gets (position . head)
       return . Just $ [MovePenUp v]
-    f (Letter "[") = do
+    f ("[") = do
       modify (\(x:xs) -> (x:x:xs))
       return Nothing
-    f (Letter "]") = do
+    f ("]") = do
       modify (\(x:xs) -> xs)
       v2 <- gets (position . head)
       c <- gets (color . head)
 
       return . Just $ [MovePenUp v2, ChangeColor c]
-    f (Letter "+") = do
+    f ("+") = do
       modifyR (rotateU thetaRads)
       return Nothing
-    f (Letter "-") = do
+    f ("-") = do
       modifyR (rotateU (-thetaRads))
       return Nothing
-    f (Letter "&") = do
+    f ("&") = do
       modifyR (rotateL thetaRads)
       return Nothing
-    f (Letter "^") = do
+    f ("^") = do
       modifyR (rotateL (-thetaRads))
       return Nothing
-    f (Letter "\\") = do
+    f ("\\") = do
       modifyR (rotateH thetaRads)
       return Nothing
-    f (Letter "/") = do
+    f ("/") = do
       modifyR (rotateH (-thetaRads))
       return Nothing
-    f (Letter "|") = do
+    f ("|") = do
       modifyR (rotateU pi)
       return Nothing
-    f (Letter "'") = do
+    f ("'") = do
       modifyC (+ 1)
       c <- gets (color . head)
       return . Just $ [ChangeColor c]
@@ -510,7 +602,7 @@ mkProductions :: [(String, String)] -> Productions
 mkProductions template = Productions {
   prodsRules = map (\(l, w) -> Production {
             prodRule = mkRule l,
-            replacement = lword w
+            replacement = parseUnsafeExpr w
           }) template,
   prodsIgnore = []
 }
@@ -519,14 +611,14 @@ mkProductions2 :: [(MatchRule, String)] -> Productions
 mkProductions2 template = Productions {
   prodsRules = map (\(r, w) -> Production {
             prodRule = r,
-            replacement = lword w
+            replacement = parseUnsafeExpr w
           }) template,
   prodsIgnore = []
 }
 
 withIgnore :: String -> Productions -> Productions
 
-withIgnore list ps = ps { prodsIgnore = map Letter $ words list }
+withIgnore list ps = ps { prodsIgnore = map letter $ words list }
 productions = mkProductions2
 
 tests = let gen = mkStdGen 42 in testGroup "L-Systems"
@@ -584,7 +676,35 @@ tests = let gen = mkStdGen 42 in testGroup "L-Systems"
           ]
           )
     ]
+  , testGroup "Parametric"
+    [ testGroup "Parsing"
+      [ testCase "One param"
+          $ LWord [mkPLetter "F" [3]] @=? (plword "F(3)")
+      , testCase "No param"
+          $ LWord [mkPLetter "F" []]  @=? (plword "F")
+      , testCase "No param brackets"
+          $ LWord [mkPLetter "F" []] @=? (plword "F()")
+      , testCase "Two param"
+          $ LWord [mkPLetter "F" [3, 4]] @=? (plword "F(3,4)")
+      , testCase "Two param whitespace"
+          $ LWord [mkPLetter "F" [3, 4]] @=? (plword "F( 3 , 4  )")
+      , testCase "Two var"
+          $ LWord [mkPLetter "F" [], mkPLetter "G" [2]] @=? (plword "F G(2)")
+      , testCase "Whitespace"
+          $ LWord [mkPLetter "F" []] @=? (plword "  F  ")
+      , testCase "Expressions"
+          $ LWord [mkPLetter "F" [], mkPLetter "+" []] @=? (parseUnsafeExpr "F +")
+      ]
+    ]
   ]
+
+-- ω : B(2)A(4, 4)
+-- p1 : A(x, y) : y <= 3 → A(x ∗ 2, x + y)
+-- p2 : A(x, y) : y > 3 → B(x)A(x/y, 0)
+-- p3 : B(x) : x < 1 → C
+-- p4 : B(x) : x >= 1 → B(x − 1)
+
+mkPLetter s p = PLetter { letterSymbol = s, letterParams = p }
 
 makePath :: S.AttributeValue
 makePath = mkPath $ do
