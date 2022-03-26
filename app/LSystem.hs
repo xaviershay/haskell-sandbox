@@ -20,6 +20,7 @@ import qualified Text.Parsec as P
 import Text.Parsec.Expr
 import qualified Text.Parsec.Token    as Tok
 import qualified Text.Parsec.Language as Tok
+import qualified Data.HashMap.Strict as M
 
 
 import Linear.V2
@@ -37,18 +38,19 @@ lexer :: Tok.TokenParser ()
 lexer = Tok.makeTokenParser style
   where
     style = Tok.emptyDef
-      { Tok.reservedOpNames = ["+", "!", "^", "/", "*"]
+      { Tok.reservedOpNames = ["+", "^", "/", "*"]
       , Tok.reservedNames   = []
       , Tok.identStart      = P.letter
       }
 
---reservedOp = Tok.reservedOp lexer
+reservedOp = Tok.reservedOp lexer
 whiteSpace = Tok.whiteSpace lexer
---
---termExpr = (parens expr
---             <|> Const . read <$> many1 (oneOf ['0'..'9']) -- TODO: Decimal
---             <|> Var . replicate 1 <$> oneOf ['a'..'z']
---           )) <* whiteSpace
+
+parens = P.between (P.char '(' <* whiteSpace) (P.char ')')
+termExpr = (parens exprParser
+             <|> ExprConst <$> paramExpr
+             <|> ExprVar <$> P.many1 exprSymbolExpr
+           ) <* whiteSpace
 --
 --table = [ [postfix "!" (Op1 Factorial), series "S", limit "lim", functionExpr, prefix "-" (Op1 Negate) ]
 --        , [binary "^" (Op2 Exponent) AssocLeft ]
@@ -56,10 +58,29 @@ whiteSpace = Tok.whiteSpace lexer
 --        , [binary "+" (Op2 Sum) AssocLeft, binary "-" (\a b -> Op2 Sum a (Op1 Negate b)) AssocLeft ]
 --        ]
 
+binary name fun assoc = Infix (do { reservedOp name; return fun}) assoc
 
-symbolExpr = P.satisfy (\x -> not $ x `elem` (" ()" :: String))
+table = [ [binary "^" (ExprOp2 Exponent) AssocLeft ]
+        , [binary "*" (ExprOp2 Product) AssocLeft, binary "/" (ExprOp2 Fraction) AssocLeft]
+        , [ binary "+" (ExprOp2 Sum) AssocLeft
+          , binary "-" (\a b -> ExprOp2 Sum a (ExprOp2 Product b (ExprConst (-1)))) AssocLeft
+          ]
+        ]
 
-paramExpr = read <$> P.many1 P.digit
+exprParser = buildExpressionParser table (whiteSpace *> termExpr)
+
+exprSymbolExpr = P.satisfy (\x -> not $ x `elem` (" (),+-*/^" :: String))
+symbolExpr = P.satisfy (\x -> not $ x `elem` (" ()," :: String))
+
+paramExpr = do
+  leading <- P.many1 P.digit
+  decimal <- P.optionMaybe (P.char '.' >> P.many1 P.digit)
+
+  let trailing = case decimal of
+                   Just x -> "." <> x
+                   Nothing -> ""
+
+  return $ read (leading <> trailing)
 
 patternExpr = P.many1 symbolExpr
 
@@ -74,7 +95,7 @@ letterExpr paramParser = do
 
 pwordExpr = LWord <$> (whiteSpace *> P.many1 (letterExpr paramExpr <* whiteSpace))
 
-pwordExprExpr = LWord <$> (whiteSpace *> P.many (letterExpr (fail "unimplemented") <* whiteSpace))
+pwordExprExpr = LWord <$> (whiteSpace *> P.many (letterExpr exprParser <* whiteSpace))
 
 pwordPatternExpr = whiteSpace *> letterExpr patternExpr <* whiteSpace
 
@@ -82,19 +103,19 @@ parseUnsafe :: String -> LWord Letter
 parseUnsafe input =
   case P.parse pwordExpr input input of
     Right x -> x
-    Left x -> error $ "error parsing: " <> input
+    Left x -> error $ show x
 
 parseUnsafePattern :: String -> LetterPattern
 parseUnsafePattern input =
   case P.parse pwordPatternExpr input input of
     Right x -> x
-    Left x -> error $ "error parsing: " <> input
+    Left x -> error $ show x
 
 parseUnsafeExpr :: String -> LWord LetterExpr
 parseUnsafeExpr input =
   case P.parse pwordExprExpr input input of
     Right x -> x
-    Left x -> error $ "error parsing: " <> input
+    Left x -> error $ show x
 
 isoProjection = (1 / sqrt 6) * V3
   (V3 (sqrt 3) 0 ((-1) * sqrt 3))
@@ -113,7 +134,15 @@ data PLetter a = PLetter {
 
 plword s = parseUnsafe s
 
-data Expr = Expr
+data Term2 = Sum | Product | Fraction | Exponent
+  deriving (Show, Eq)
+
+data Env = Env (M.HashMap String Expr)
+  deriving (Show)
+data Expr =
+  ExprConst Double
+  | ExprVar String
+  | ExprOp2 Term2 Expr Expr
   deriving (Show, Eq)
 
 type LetterExpr = PLetter Expr
@@ -180,14 +209,26 @@ type LetterContext = ((Letter, Maybe Letter), Maybe Letter)
 identityProduction :: LetterContext -> Production
 identityProduction ((l, _), _) = Production { prodRule = mkRule (letterSymbol l), replacement = LWord [PLetter { letterSymbol = letterSymbol l, letterParams = []}] }
 
-matchProduction :: StatefulGen g m => Productions -> g -> LetterContext -> m Production
+envFromContext :: Production -> LetterContext -> Env
+envFromContext p ((l1, l2), l3) =
+  let
+    rule = prodRule p
+    paramLabels = letterParams . ruleLetter $ rule
+    paramValues = map ExprConst . letterParams $ l1 -- TODO: Env could just be Double instead of Expr?
+    xs = zip paramLabels paramValues
+  in
+  Env $ M.fromList xs
+
+emptyEnv = Env mempty
+
+matchProduction :: StatefulGen g m => Productions -> g -> LetterContext -> m (Production, Env)
 matchProduction ps gen context  =
   case filter (\p -> prodRule p `applyRule` context) (prodsRules ps) of
-    [x] -> return $ x
-    []  -> return $ identityProduction context
+    [x] -> return $ (x, envFromContext x context)
+    []  -> return $ (identityProduction context, emptyEnv)
     xs  -> do
       i <- uniformRM (0, length xs - 1) gen
-      return $ xs !! i
+      return $ let x = xs !! i in (x, envFromContext x context)
 
 data Productions = Productions {
   prodsRules :: [Production],
@@ -208,13 +249,35 @@ evalExpr (LWord ls) = LWord . map f $ ls
   where
     f (PLetter { letterSymbol = s }) = PLetter { letterSymbol = s, letterParams = [] }
 
+replacementWithContext :: (Production, Env) -> LWord Letter
+replacementWithContext (p, env) =
+  let
+    LWord replacementWord = replacement p
+  in
+  LWord . map f $ replacementWord
+  where
+    f l = PLetter {
+      letterSymbol = letterSymbol l,
+      letterParams = map (eval env) (letterParams l)
+    }
+
+eval :: Env -> Expr -> Double
+eval env expr = eval' env expr
+
+eval' _ (ExprConst d) = d
+eval' env@(Env varMap) (ExprVar d) = eval env (M.findWithDefault (ExprConst 0) d varMap)
+eval' env (ExprOp2 Sum a b) = eval env a + eval env b
+eval' env (ExprOp2 Product a b) = eval env a * eval env b
+eval' env (ExprOp2 Fraction a b) = eval env a / eval env b
+eval' env (ExprOp2 Exponent a b) = eval env a ** eval env b
+
 step :: StatefulGen g m => (LWord Letter) -> Productions -> g -> m (LWord Letter)
 step (LWord axiom) productions gen = do
   let axiomWithContext = zip
         (zip axiom (extractPres axiom $ prodsIgnore productions))
         (extractPosts axiom $ prodsIgnore productions)
   parts <- mapM (matchProduction productions gen) axiomWithContext
-  return $ evalExpr $ foldl (<>) mempty $ map replacement parts
+  return $ foldl (<>) mempty $ map replacementWithContext parts
 
 stepNM :: StatefulGen g m => Int -> LWord Letter -> Productions -> g -> m (LWord Letter)
 stepNM 0 axiom _ _ = return axiom
@@ -273,8 +336,8 @@ runSystem3D name n theta axiom ps = do
 
 singleCharWord = intercalate " " . fmap pure
 
-main2 = defaultMain tests
-main = do
+main = defaultMain tests
+main2 = do
   runSystem "penrose" 4 36 (singleCharWord "[N]++[N]++[N]++[N]++[N]")
     [ ("M", singleCharWord "OF++PF----NF[-OF----MF]++")
     , ("N", singleCharWord "+OF--PF[---MF--NF]+")
@@ -677,23 +740,60 @@ tests = let gen = mkStdGen 42 in testGroup "L-Systems"
           )
     ]
   , testGroup "Parametric"
-    [ testGroup "Parsing"
+    [ testCase "Basic substitution"
+      $ (parseUnsafe "G(1, 2)") @=?
+      (stepN gen 1 (parseUnsafe "F(1, 2)") $ productions
+        [ (match "F(x, y)", "G(x,y)")
+        ])
+    , testCase "Addition"
+      $ (parseUnsafe "F(3)") @=?
+      (stepN gen 2 (parseUnsafe "F(1)") $ productions
+        [ (match "F(x)", "F(x+1)")
+        ])
+    , testCase "Arithmetic"
+      $ (parseUnsafe "F(4)") @=?
+      (stepN gen 1 (parseUnsafe "F(1)") $ productions
+        [ (match "F(x)", "F((x*(x+9)/5)^2)")
+        ])
+    , testGroup "Parsing"
       [ testCase "One param"
-          $ LWord [mkPLetter "F" [3]] @=? (plword "F(3)")
+          $ LWord [mkPLetter "F" [3]] @=? (parseUnsafe "F(3)")
+      , testCase "Decimal"
+          $ LWord [mkPLetter "F" [3.55]] @=? (parseUnsafe "F(3.55)")
       , testCase "No param"
-          $ LWord [mkPLetter "F" []]  @=? (plword "F")
+          $ LWord [mkPLetter "F" []]  @=? (parseUnsafe "F")
       , testCase "No param brackets"
-          $ LWord [mkPLetter "F" []] @=? (plword "F()")
+          $ LWord [mkPLetter "F" []] @=? (parseUnsafe "F()")
       , testCase "Two param"
-          $ LWord [mkPLetter "F" [3, 4]] @=? (plword "F(3,4)")
+          $ LWord [mkPLetter "F" [3, 4]] @=? (parseUnsafe "F(3,4)")
       , testCase "Two param whitespace"
-          $ LWord [mkPLetter "F" [3, 4]] @=? (plword "F( 3 , 4  )")
+          $ LWord [mkPLetter "F" [3, 4]] @=? (parseUnsafe "F( 3 , 4  )")
       , testCase "Two var"
-          $ LWord [mkPLetter "F" [], mkPLetter "G" [2]] @=? (plword "F G(2)")
+          $ LWord [mkPLetter "F" [], mkPLetter "G" [2]] @=? (parseUnsafe "F G(2)")
       , testCase "Whitespace"
-          $ LWord [mkPLetter "F" []] @=? (plword "  F  ")
+          $ LWord [mkPLetter "F" []] @=? (parseUnsafe "  F  ")
       , testCase "Expressions"
           $ LWord [mkPLetter "F" [], mkPLetter "+" []] @=? (parseUnsafeExpr "F +")
+      , testCase "Addition"
+          $ LWord [mkPLetter "F" [ExprOp2 Sum (ExprVar "x") (ExprConst 1)]]
+            @=? (parseUnsafeExpr "F(x+1)")
+      , testCase "Subtraction"
+          $ LWord [mkPLetter "F" [ExprOp2 Sum (ExprVar "x") (ExprOp2 Product (ExprConst 1) (ExprConst (-1)))]]
+            @=? (parseUnsafeExpr "F(x-1)")
+      , testCase "Multiplication"
+          $ LWord [mkPLetter "F" [ExprOp2 Product (ExprVar "x") (ExprConst 1)]]
+            @=? (parseUnsafeExpr "F(x*1)")
+      , testCase "Division"
+          $ LWord [mkPLetter "F" [ExprOp2 Fraction (ExprVar "x") (ExprConst 1)]]
+            @=? (parseUnsafeExpr "F(x/1)")
+      , testCase "Exponent"
+          $ LWord [mkPLetter "F" [ExprOp2 Exponent (ExprVar "x") (ExprConst 1)]]
+            @=? (parseUnsafeExpr "F(x^1)")
+      , testCase "Parens"
+          $ LWord [mkPLetter "F" [ExprOp2 Sum (ExprVar "x") (ExprVar "x")]]
+            @=? (parseUnsafeExpr "F(((x+x)))")
+      , testCase "Patterns"
+          $ mkPLetter "F" ["x", "y"] @=? (parseUnsafePattern "F(x, y)")
       ]
     ]
   ]
