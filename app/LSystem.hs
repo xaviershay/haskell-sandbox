@@ -96,6 +96,39 @@ main = do
         ("F", "F [ + F ] F [ - F ] F")
       ])
 
+  writeFile "output/branching-2.svg" $ generateSvg 20 $
+      (stepN 4 (lword "F")
+      $ mkProductions [
+        ("F", "F [ + F ] F [ - F ] [ F ]")
+      ])
+
+  writeFile "output/branching-3.svg" $ generateSvg 22.5 $
+      (stepN 4 (lword "F")
+      $ mkProductions [
+        ("F", "F F - [ - F + F + F ] + [ + F - F - F ]")
+      ])
+
+  writeFile "output/branching-4.svg" $ generateSvg 20 $
+      (stepN 7 (lword "X")
+      $ mkProductions [
+        ("X", "F [ + X ] F [ - X ] + X"),
+        ("F", "F F")
+      ])
+
+  writeFile "output/branching-5.svg" $ generateSvg 25.7 $
+      (stepN 6 (lword "X")
+      $ mkProductions [
+        ("X", "F [ + X ] [ - X ] F X"),
+        ("F", "F F")
+      ])
+
+  writeFile "output/branching-6.svg" $ generateSvg 22.5 $
+      (stepN 5 (lword "X")
+      $ mkProductions [
+        ("X", "F - [ [ X ] + X ] + F [ + F X ] - X"),
+        ("F", "F F")
+      ])
+
 type Point = (Double, Double)
 
 data Instruction = MovePenDown Point | MovePenUp Point
@@ -180,6 +213,7 @@ toPath thetaRads ls = catMaybes $ evalState (mapM f ls) [(270 / 180 * pi, (0,0))
     f (Letter "-") = do
       modify (\((h, p):rest) -> ((h - thetaRads, p):rest))
       return Nothing
+    f _ = return Nothing
 
 mkProductions :: [(String, String)] -> [Production]
 mkProductions template = map (\(l, w) -> Production {
