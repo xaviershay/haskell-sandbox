@@ -11,11 +11,24 @@ import Test.Tasty
 import Test.Tasty.HUnit
 
 import Linear.V2
+import Linear.V3
+import Linear.Projection
+import Linear.Matrix
 
 import Text.Blaze.Svg11 ((!), mkPath, rotate, lr, mr, l, m)
 import qualified Text.Blaze.Svg11 as S
 import qualified Text.Blaze.Svg11.Attributes as A
 import Text.Blaze.Svg.Renderer.String (renderSvg)
+
+isoProjection = (1 / sqrt 6) * V3
+  (V3 (sqrt 3) 0 ((-1) * sqrt 3))
+  (V3 1 2 1)
+  (V3 (sqrt 2) ((-1) * sqrt 2) (sqrt 2))
+
+orthoProjection = V3
+  (V3 1.0 0 0)
+  (V3 0.0 1 0)
+  (V3 0.0 0 0)
 
 data Letter = Letter {
   symbol :: String
@@ -121,11 +134,12 @@ main = do
       ("F", "F F")
     ]
 
-type Point = V2 Double
+type Point = V3 Double
+type ProjectedPoint = V2 Double
 
-data Instruction = MovePenDown Point | MovePenUp Point
+data Instruction a = MovePenDown a | MovePenUp a
 
-extrude :: Double -> (Point, Point) -> (Point, Point)
+extrude :: Double -> (ProjectedPoint, ProjectedPoint) -> (ProjectedPoint, ProjectedPoint)
 extrude t (V2 x1 y1, V2 x2 y2) =
   let
     sx = (x2 - x1) * t
@@ -138,7 +152,7 @@ generateSvg :: Double -> LWord -> String
 generateSvg theta (LWord ls) = renderSvg svgDoc
   where
     thetaRads = theta / 180.0 * pi
-    is = toPath thetaRads ls
+    is = projectPathOrtho $ toPath thetaRads ls
 
     svgDoc :: S.Svg
     svgDoc =
@@ -176,27 +190,42 @@ bounds is =
           pos + dv,
           mkVec2 (min minX (x + dx)) (min minY (y + dy)),
           mkVec2 (max maxX (x + dx)) (max maxY (y + dy))
-         )) (zeroV, zeroV, zeroV) (map toCoords is)
+         )) (mkVec2 0 0, mkVec2 0 0, mkVec2 0 0) (map toCoords is)
       in (mn, mx)
+
+projectPathIso :: [Instruction Point] -> [Instruction ProjectedPoint]
+projectPathIso = map f
+  where
+    f (MovePenDown x) = MovePenDown $ p x
+    f (MovePenUp x) = MovePenDown $ p x
+    p v3 = let (V3 x y _) = orthoProjection !* (isoProjection !* v3) in V2 x y
+
+projectPathOrtho :: [Instruction Point] -> [Instruction ProjectedPoint]
+projectPathOrtho = map f
+  where
+    f (MovePenDown x) = MovePenDown $ p x
+    f (MovePenUp x) = MovePenDown $ p x
+    p v3 = let (V3 x y _) = orthoProjection !* v3 in V2 x y
 
 toCoords (MovePenDown c) = c
 toCoords (MovePenUp c) = c
 
 mkVec2 = V2
+mkVec3 = V3
 
-zeroV = V2 0 0
+zeroV = V3 0 0 0
 
 toPath thetaRads ls = catMaybes $ evalState (mapM f ls) [(270 / 180 * pi, zeroV)]
   where
-    f :: Letter -> State [(Double, Point)] (Maybe Instruction)
+    f :: Letter -> State [(Double, Point)] (Maybe (Instruction Point))
     f (Letter ('F':_)) = do
       heading <- gets (fst . head)
-      let dv = mkVec2 (cos heading) (sin heading)
+      let dv = mkVec3 (cos heading) (sin heading) 0
       modify (\((h, v):rest) -> ((h, v + dv):rest))
       return . Just $ MovePenDown dv
     f (Letter "f") = do
       heading <- gets (fst . head)
-      let dv = mkVec2 (cos heading) (sin heading)
+      let dv = mkVec3 (cos heading) (sin heading) 0
       modify (\((h, v):rest) -> ((h, v + dv):rest))
       return . Just $ MovePenUp dv
     f (Letter "[") = do
