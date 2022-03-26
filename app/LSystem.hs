@@ -336,8 +336,8 @@ runSystem3D name n theta axiom ps = do
 
 singleCharWord = intercalate " " . fmap pure
 
-main = defaultMain tests
-main2 = do
+main2 = defaultMain tests
+main = do
   runSystem "penrose" 4 36 (singleCharWord "[N]++[N]++[N]++[N]++[N]")
     [ ("M", singleCharWord "OF++PF----NF[-OF----MF]++")
     , ("N", singleCharWord "+OF--PF[---MF--NF]+")
@@ -345,6 +345,9 @@ main2 = do
     , ("P", singleCharWord "--OF++++MF[+PF++++NF]--NF")
     , ("F", "")
     ]
+
+  runSystem2 "parametric-test" 0 36 "F [ + F(0.5) +(0.8) F(0.25) ] -(2) F" $
+    productions []
 
   -- One suspicion for why these don't work is the angle alternation:
   --
@@ -605,52 +608,52 @@ toPath :: Double -> [Letter] -> [Instruction Point]
 toPath thetaRads ls = concat . catMaybes $ evalState (mapM fInit ls) [initialTurtle]
   where
     fInit :: Letter -> State [TurtleState] (Maybe [Instruction Point])
-    fInit l = f (letterSymbol l)
+    fInit l = f (letterSymbol l, head $ letterParams l <> [1.0])
 
-    f :: String -> State [TurtleState] (Maybe [Instruction Point])
-    f (('F':_)) = do
+    f :: (String, Double) -> State [TurtleState] (Maybe [Instruction Point])
+    f (('F':_), a) = do
       rv <- gets (rotateM . head)
-      let dv = rv !* (mkVec3 1 0 0)
+      let dv = rv !* (mkVec3 a 0 0)
       modifyP dv
       v <- gets (position . head)
       return . Just $ [MovePenDown v]
-    f ("f") = do
+    f ("f", a) = do
       rv <- gets (rotateM . head)
-      let dv = rv !* (mkVec3 1 0 0)
+      let dv = rv !* (mkVec3 a 0 0)
       modifyP dv
       v <- gets (position . head)
       return . Just $ [MovePenUp v]
-    f ("[") = do
+    f ("[", _) = do
       modify (\(x:xs) -> (x:x:xs))
       return Nothing
-    f ("]") = do
+    f ("]", _) = do
       modify (\(x:xs) -> xs)
       v2 <- gets (position . head)
       c <- gets (color . head)
 
       return . Just $ [MovePenUp v2, ChangeColor c]
-    f ("+") = do
-      modifyR (rotateU thetaRads)
+    f ("+", a) = do
+      modifyR (rotateU $ thetaRads * a)
       return Nothing
-    f ("-") = do
-      modifyR (rotateU (-thetaRads))
+    f ("-", a) = do
+      modifyR (rotateU $ (-thetaRads) * a)
       return Nothing
-    f ("&") = do
-      modifyR (rotateL thetaRads)
+    f ("&", a) = do
+      modifyR (rotateL $ thetaRads * a)
       return Nothing
-    f ("^") = do
-      modifyR (rotateL (-thetaRads))
+    f ("^", a) = do
+      modifyR (rotateL $ (-thetaRads) * a)
       return Nothing
-    f ("\\") = do
-      modifyR (rotateH thetaRads)
+    f ("\\", a) = do
+      modifyR (rotateH $ thetaRads * a)
       return Nothing
-    f ("/") = do
-      modifyR (rotateH (-thetaRads))
+    f ("/", a) = do
+      modifyR (rotateH $ (-thetaRads) * a)
       return Nothing
-    f ("|") = do
+    f ("|", _) = do
       modifyR (rotateU pi)
       return Nothing
-    f ("'") = do
+    f ("'", _) = do
       modifyC (+ 1)
       c <- gets (color . head)
       return . Just $ [ChangeColor c]
