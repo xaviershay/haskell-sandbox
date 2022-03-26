@@ -65,7 +65,7 @@ matchProduction ps l =
   case filter (\p -> matchSymbol p == l) ps of
     [x] -> x
     []  -> identityProduction l
-    _   -> error "unimplemented: multiple matching productions"
+    xs  -> head xs
 
 step :: LWord -> [Production] -> LWord
 step (LWord axiom) productions =
@@ -89,6 +89,14 @@ runSystem3D name n theta axiom ps =
 
 --main = defaultMain tests
 main = do
+  runSystem "stochastic" 3 20 "S"
+    [ ("S", "S [ / / & & L ] [ / / ^ ^ L ] F S")
+    , ("S", "S F S")
+    , ("S", "S")
+    , ("L", "[ ' F ]")
+    ]
+
+  guard False
   runSystem3D "plant" 4 18 "P"
     [ ("P", "I + [ P + Fl ] - - / / [ - - L ] I [ + + L ] - [ P Fl ] + + P Fl")
     , ("I", "F S [ / / & & L ] [ / / ^ ^ L ] F S")
