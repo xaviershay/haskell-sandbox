@@ -58,40 +58,71 @@ stepN n axiom rules = stepN (n - 1) (step axiom rules) rules
 
 --main = defaultMain tests
 main = do
-  writeFile "output/koch-island.svg" $ generateSvg 0.09 (20, 80) (90.0) $
+  writeFile "output/koch-island.svg" $ generateSvg 90.0 $
     stepN 3 (lword "F - F - F - F") $ mkProductions [
         ("F", "F - F + F + F F - F - F + F")
     ]
 
-  writeFile "output/islands-lakes.svg" $ generateSvg 0.15 (20, 20) (90.0) $
+  writeFile "output/islands-lakes.svg" $ generateSvg 90.0 $
       stepN 2 (lword "F + F + F + F") $ mkProductions [
           ("F", "F + f - F F + F + F F + F f + F F - f + F F - F - F F - F f - F F F")
         ]
 
-data Instruction = MovePenDown (Double, Double) | MovePenUp (Double, Double)
+type Point = (Double, Double)
 
-generateSvg :: Double -> (Double, Double) -> Double -> LWord -> String
-generateSvg scale (ox, oy) theta (LWord ls) = renderSvg svgDoc
+data Instruction = MovePenDown Point | MovePenUp Point
+
+extrude :: Double -> (Point, Point) -> (Point, Point)
+extrude t ((x1, y1), (x2, y2)) =
+  let
+    sx = (x2 - x1) * t
+    sy = (y2 - y1) * t
+  in
+
+    ( (x1 - sx, y1 - sy), (x2 + sx, y2 + sy))
+
+generateSvg :: Double -> LWord -> String
+generateSvg theta (LWord ls) = renderSvg svgDoc
   where
     thetaRads = theta / 180.0 * pi
+    is = toPath thetaRads ls
+
     svgDoc :: S.Svg
-    svgDoc = S.docTypeSvg ! A.version "1.1" ! A.width "500" ! A.height "500" ! A.viewbox "0 0 100 100" $ do
+    svgDoc =
+      let
+        ((minX, minY), (maxX, maxY)) = extrude 0.1 (bounds is)
+      in
+      S.docTypeSvg ! A.version "1.1" ! A.width "500" ! A.height "500" ! A.viewbox (S.toValue . intercalate " " . map show $ [minX, minY, maxX - minX, maxY - minY]) $ do
         S.g $ do
-          S.rect ! A.width "100" ! A.height "100" ! A.fill "#CBD4C2"
+          S.rect ! A.x (S.toValue minX) ! A.y (S.toValue minY) ! A.width (S.toValue $ maxX - minX) ! A.height (S.toValue $ maxY - minY) ! A.fill "#CBD4C2"
         S.g $ do
-          S.path ! A.d turtleToPath ! A.style "stroke:#50514F;stroke-width:0.2;fill:none"
+          S.path ! A.d turtleToPath ! A.style "stroke-linecap:square;stroke:#50514F;stroke-width:0.2px;fill:none"
 
     turtleToPath :: S.AttributeValue
-    turtleToPath  = mkPath $ do
-      let s = scale * 10
-      m ox oy
-      forM_ (toPath ls) $ \i ->
+    turtleToPath = mkPath $ do
+      m 0 0
+      forM_ is $ \i ->
         case i of
-          MovePenDown (x, y) -> lr (x * s) (y * s)
-          MovePenUp (x, y) -> mr (x * s) (y * s)
+          MovePenDown (x, y) -> lr x y
+          MovePenUp (x, y) -> mr x y
 
-    toPath ls = catMaybes $ evalState (mapM f ls) 0
+bounds is =
+  let (_, mn, mx) = foldl (\(
+          (x, y),
+          (minX, minY),
+          (maxX, maxY)
+        ) (dx, dy) -> (
+          (x + dx, y + dy),
+          (min minX (x + dx), min minY (y + dy)),
+          (max maxX (x + dx), max maxY (y + dy))
+         )) ((0,0),(0,0), (0, 0)) (map toCoords is)
+      in (mn, mx)
 
+toCoords (MovePenDown c) = c
+toCoords (MovePenUp c) = c
+
+toPath thetaRads ls = catMaybes $ evalState (mapM f ls) 0
+  where
     f :: Letter -> State Double (Maybe Instruction)
     f (Letter "F") = do
       heading <- get
