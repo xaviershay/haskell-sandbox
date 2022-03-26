@@ -152,6 +152,7 @@ executable lsystem
                      , tasty-hunit
                      , blaze-svg
                      , linear
+                     , random
   default-language:    Haskell2010
 
 executable combinators

@@ -9,6 +9,8 @@ import Control.Monad (forM_, foldM, guard)
 import Control.Monad.State (State(..), runState, modify, evalState, get, gets)
 import Data.List (intercalate)
 import Data.Monoid ((<>))
+import System.Random
+import System.Random.Stateful
 import Test.Tasty
 import Test.Tasty.HUnit
 
@@ -60,36 +62,47 @@ lword = LWord . map Letter . words
 
 identityProduction l = Production { matchSymbol = l, replacement = LWord [l] }
 
-matchProduction :: [Production] -> Letter -> Production
-matchProduction ps l =
+matchProduction :: StatefulGen g m => [Production] -> g -> Letter -> m Production
+matchProduction ps gen l  =
   case filter (\p -> matchSymbol p == l) ps of
-    [x] -> x
-    []  -> identityProduction l
-    xs  -> head xs
+    [x] -> return $ x
+    []  -> return $ identityProduction l
+    xs  -> do
+      i <- uniformRM (0, length xs - 1) gen
+      return $ xs !! i
 
-step :: LWord -> [Production] -> LWord
-step (LWord axiom) productions =
-  foldl (<>) mempty $ map (replacement . matchProduction productions) axiom
+step :: StatefulGen g m => LWord -> [Production] -> g -> m LWord
+step (LWord axiom) productions gen = do
+  parts <- mapM (matchProduction productions gen) axiom
+  return $ foldl (<>) mempty $ map replacement parts
 
-stepN 0 axiom _ = axiom
-stepN n axiom rules = stepN (n - 1) (step axiom rules) rules
+stepNM :: StatefulGen g m => Int -> LWord -> [Production] -> g -> m LWord
+stepNM 0 axiom _ _ = return axiom
+stepNM n axiom rules gen = do
+  word <- step axiom rules gen
 
+  stepNM (n - 1) word rules gen
+
+stepN :: RandomGen g => g -> Int -> LWord -> [Production] -> LWord
+stepN gen n axiom rules = fst $ runStateGen gen (stepNM n axiom rules)
 
 runSystem :: String -> Int -> Double -> String -> [(String, String)] -> IO ()
-runSystem name n theta axiom ps =
+runSystem name n theta axiom ps = do
+  let gen = mkStdGen 42
   writeFile ("output/" <> name <> ".svg")
     $ generateSvg projectPathOrtho theta
-    $ stepN n (lword axiom) (mkProductions ps)
+    $ stepN gen n (lword axiom) (mkProductions ps)
 
 runSystem3D :: String -> Int -> Double -> String -> [(String, String)] -> IO ()
-runSystem3D name n theta axiom ps =
+runSystem3D name n theta axiom ps = do
+  let gen = mkStdGen 42
   writeFile ("output/" <> name <> ".svg")
     $ generateSvg projectPathIso theta
-    $ stepN n (lword axiom) (mkProductions ps)
+    $ stepN gen n (lword axiom) (mkProductions ps)
 
 --main = defaultMain tests
 main = do
-  runSystem "stochastic" 3 20 "S"
+  runSystem "stochastic" 5 20 "S"
     [ ("S", "S [ / / & & L ] [ / / ^ ^ L ] F S")
     , ("S", "S F S")
     , ("S", "S")
@@ -370,14 +383,14 @@ mkProductions template = map (\(l, w) -> Production {
   replacement = lword w
 }) template
 
-tests = testGroup "Deterministic & Context-Free (DOL)"
-  [ testCase "Trivial" $ (lword "a b a b a a b a") @=? (stepN 5 (lword "b")
+tests = let gen = mkStdGen 42 in testGroup "Deterministic & Context-Free (DOL)"
+  [ testCase "Trivial" $ (lword "a b a b a a b a") @=? (stepN gen 5 (lword "b")
       $ mkProductions [
         ("b", "a"),
         ("a", "b a")
       ])
   , testCase "Anabaena catenula" $ (lword "b◀ a▶ b◀ a▶ a▶ b◀ a▶ a▶") @=?
-      (stepN 4 (lword "a▶")
+      (stepN gen 4 (lword "a▶")
         $ mkProductions [
           ("a▶", "a◀ b▶"),
           ("a◀", "b◀ a▶"),
@@ -386,13 +399,13 @@ tests = testGroup "Deterministic & Context-Free (DOL)"
         ])
   , testCase "Koch island"
       $ (lword "F - F + F + F F - F - F + F - F - F + F + F F - F - F + F - F - F + F + F F - F - F + F - F - F + F + F F - F - F + F") @=?
-      (stepN 1 (lword "F - F - F - F")
+      (stepN gen 1 (lword "F - F - F - F")
         $ mkProductions [
           ("F", "F - F + F + F F - F - F + F")
         ])
   , testCase "Bracketed"
       $ (lword "F [ + F ] F [ - F ] F") @=?
-      (stepN 1 (lword "F")
+      (stepN gen 1 (lword "F")
       $ mkProductions [
         ("F", "F [ + F ] F [ - F ] F")
       ])
