@@ -10,6 +10,8 @@ import Data.Monoid ((<>))
 import Test.Tasty
 import Test.Tasty.HUnit
 
+import Linear.V2
+
 import Text.Blaze.Svg11 ((!), mkPath, rotate, lr, mr, l, m)
 import qualified Text.Blaze.Svg11 as S
 import qualified Text.Blaze.Svg11.Attributes as A
@@ -119,18 +121,18 @@ main = do
       ("F", "F F")
     ]
 
-type Point = (Double, Double)
+type Point = V2 Double
 
 data Instruction = MovePenDown Point | MovePenUp Point
 
 extrude :: Double -> (Point, Point) -> (Point, Point)
-extrude t ((x1, y1), (x2, y2)) =
+extrude t (V2 x1 y1, V2 x2 y2) =
   let
     sx = (x2 - x1) * t
     sy = (y2 - y1) * t
   in
 
-    ( (x1 - sx, y1 - sy), (x2 + sx, y2 + sy))
+    ( mkVec2 (x1 - sx) (y1 - sy), mkVec2 (x2 + sx) (y2 + sy))
 
 generateSvg :: Double -> LWord -> String
 generateSvg theta (LWord ls) = renderSvg svgDoc
@@ -141,7 +143,7 @@ generateSvg theta (LWord ls) = renderSvg svgDoc
     svgDoc :: S.Svg
     svgDoc =
       let
-        ((minX, minY), (maxX, maxY)) = extrude 0.1 (bounds is)
+        (V2 minX minY, V2 maxX maxY) = extrude 0.1 (bounds is)
         aspect = (maxX - minX) / (maxY - minY)
       in
       S.docTypeSvg
@@ -159,44 +161,53 @@ generateSvg theta (LWord ls) = renderSvg svgDoc
       m 0 0
       forM_ is $ \i ->
         case i of
-          MovePenDown (x, y) -> lr x y
-          MovePenUp (x, y) -> mr x y
+          MovePenDown (V2 x y) -> lr x y
+          MovePenUp (V2 x y) -> mr x y
 
 bounds is =
   let (_, mn, mx) = foldl (\(
-          (x, y),
-          (minX, minY),
-          (maxX, maxY)
-        ) (dx, dy) -> (
-          (x + dx, y + dy),
-          (min minX (x + dx), min minY (y + dy)),
-          (max maxX (x + dx), max maxY (y + dy))
-         )) ((0,0),(0,0), (0, 0)) (map toCoords is)
+          pos,
+          (V2 minX minY),
+          (V2 maxX maxY)
+        ) dv -> let
+          (V2 x y) = pos
+          (V2 dx dy) = dv
+        in (
+          pos + dv,
+          mkVec2 (min minX (x + dx)) (min minY (y + dy)),
+          mkVec2 (max maxX (x + dx)) (max maxY (y + dy))
+         )) (zeroV, zeroV, zeroV) (map toCoords is)
       in (mn, mx)
 
 toCoords (MovePenDown c) = c
 toCoords (MovePenUp c) = c
 
-toPath thetaRads ls = catMaybes $ evalState (mapM f ls) [(270 / 180 * pi, (0,0))]
+mkVec2 = V2
+
+zeroV = V2 0 0
+
+toPath thetaRads ls = catMaybes $ evalState (mapM f ls) [(270 / 180 * pi, zeroV)]
   where
-    f :: Letter -> State [(Double, (Double, Double))] (Maybe Instruction)
+    f :: Letter -> State [(Double, Point)] (Maybe Instruction)
     f (Letter ('F':_)) = do
       heading <- gets (fst . head)
-      modify (\((h, (x, y)):rest) -> ((h, (x + cos heading, y + sin heading)):rest))
-      return . Just $ MovePenDown (cos heading, sin heading)
+      let dv = mkVec2 (cos heading) (sin heading)
+      modify (\((h, v):rest) -> ((h, v + dv):rest))
+      return . Just $ MovePenDown dv
     f (Letter "f") = do
       heading <- gets (fst . head)
-      modify (\((h, (x, y)):rest) -> ((h, (x + cos heading, y + sin heading)):rest))
-      return . Just $ MovePenUp (cos heading, sin heading)
+      let dv = mkVec2 (cos heading) (sin heading)
+      modify (\((h, v):rest) -> ((h, v + dv):rest))
+      return . Just $ MovePenUp dv
     f (Letter "[") = do
       modify (\(x:xs) -> (x:x:xs))
       return Nothing
     f (Letter "]") = do
-      (x1, y1) <- gets (snd . head)
+      v1 <- gets (snd . head)
       modify (\(x:xs) -> xs)
-      (x2, y2) <- gets (snd . head)
+      v2 <- gets (snd . head)
 
-      return . Just $ MovePenUp (x2 - x1, y2 - y1)
+      return . Just $ MovePenUp (v2 - v1)
     f (Letter "+") = do
       modify (\((h, p):rest) -> ((h + thetaRads, p):rest))
       return Nothing
