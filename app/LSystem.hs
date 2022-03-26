@@ -67,6 +67,7 @@ data MatchRule = MatchRule {
 instance Show MatchRule where
   show rule = show (ruleLetter rule) <> " (" <> show (ruleLetterPre rule) <> ", " <> show (ruleLetterPost rule) <> ")"
 
+match = mkRule
 mkRule letter = MatchRule
   { ruleLetter = Letter letter
   , ruleLetterPre = Nothing
@@ -83,8 +84,8 @@ applyRule r ((l, pre), post) =
        Nothing -> True
        Just _ -> ruleLetterPost r == post
 
-l <| r = r { ruleLetterPre = Just l }
-r |> l = r { ruleLetterPost = Just l }
+l <| r = r { ruleLetterPre = Just (Letter l) }
+r |> l = r { ruleLetterPost = Just (Letter l) }
 
 lword = LWord . map Letter . words
 
@@ -455,7 +456,7 @@ tests = let gen = mkStdGen 42 in testGroup "L-Systems"
       (stepN gen 2 (lword "b a a")
       $ mkProductions2
           [ 
-           (Letter "b" <| mkRule "a", "b")
+           ("b" <| match "a", "b")
           , (mkRule "b", "a")
           ]
           )
@@ -463,8 +464,8 @@ tests = let gen = mkStdGen 42 in testGroup "L-Systems"
       $ (lword "b a a") @=?
       (stepN gen 2 (lword "a a b")
       $ mkProductions2
-          [ (mkRule "a" |> Letter "b", "b")
-          , (mkRule "b", "a")
+          [ (match "a" |> "b", "b")
+          , (match "b", "a")
           ]
           )
     ]
