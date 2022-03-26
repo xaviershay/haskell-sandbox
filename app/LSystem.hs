@@ -244,6 +244,32 @@ matchProduction ps gen context  =
       i <- uniformRM (0, length xs - 1) gen
       return $ let x = xs !! i in (x, buildEnv x)
 
+type Projection = [Instruction Point] -> [Instruction ProjectedPoint]
+
+data Picture = Picture {
+  pictureTitle :: String,
+  pictureAxiom :: LWord Letter,
+  pictureN :: Int,
+  pictureColors :: [String],
+  pictureStrokeWidth :: Double,
+  pictureTheta :: Double,
+  pictureProductions :: Productions,
+  pictureSeed :: Int,
+  pictureProjection :: Projection
+}
+
+emptyPicture = Picture {
+  pictureTitle = "",
+  pictureAxiom = parseUnsafe "",
+  pictureN = 0,
+  pictureColors = defaultColors,
+  pictureStrokeWidth = defaultStrokeWidth,
+  pictureTheta = 90,
+  pictureProductions = emptyProductions,
+  pictureSeed = 0,
+  pictureProjection = projectPathOrtho
+}
+
 data Productions = Productions {
   prodsRules :: [Production],
   prodsIgnore :: [Letter],
@@ -323,7 +349,7 @@ runSystemDebug name n theta axiom ps = do
   removeDirectoryRecursive baseDir
   createDirectory baseDir
   forM_ (zip debugWords [1..]) $ \(w, i) -> do
-    let content = generateSvg projectPathOrtho theta w
+    let content = generateSvg (emptyPicture { pictureProjection = projectPathOrtho, pictureTheta = theta }) w
     lastContent <- readIORef contentVar
 
     traceM $ (show i <> ": " <> show w)
@@ -337,14 +363,23 @@ runSystemDebug name n theta axiom ps = do
 runSystem name n theta axiom ps = do
   let gen = mkStdGen 42
   writeFile ("output/" <> name <> ".svg")
-    $ generateSvg projectPathOrtho theta
+    $ generateSvg (emptyPicture { pictureProjection = projectPathOrtho, pictureTheta = theta })
     $ stepN gen n (lword axiom) (mkProductions ps)
 
 runSystem2 name n theta axiom ps = do
   let gen = mkStdGen 42
   writeFile ("output/" <> name <> ".svg")
-    $ generateSvg projectPathOrtho theta
+    $ generateSvg (emptyPicture { pictureProjection = projectPathOrtho, pictureTheta = theta })
     $ stepN gen n (parseUnsafe axiom) ps
+
+runPicture :: Picture -> IO ()
+runPicture p = do
+  let gen = mkStdGen (pictureSeed p)
+  let word = stepN gen (pictureN p) (pictureAxiom p) (pictureProductions p)
+  let svg = generateSvg p word
+  let filename = "output/" <> (pictureTitle p) <> ".svg"
+
+  writeFile filename svg
 
 ignore = id
 
@@ -352,13 +387,32 @@ runSystem3D :: String -> Int -> Double -> String -> [(String, String)] -> IO ()
 runSystem3D name n theta axiom ps = do
   let gen = mkStdGen 42
   writeFile ("output/" <> name <> ".svg")
-    $ generateSvg projectPathIso theta
+    $ generateSvg (emptyPicture { pictureProjection = projectPathIso, pictureTheta = theta })
     $ stepN gen n (parseUnsafe axiom) (mkProductions ps)
 
 singleCharWord = intercalate " " . fmap pure
 
 main2 = defaultMain tests
 main = do
+  runPicture $ emptyPicture {
+    pictureTitle = "parametric-1",
+    pictureAxiom = parseUnsafe "F(1)",
+    pictureN     = 6,
+    pictureTheta = 86,
+    pictureStrokeWidth = 0.002,
+    pictureProductions =
+      withDefines
+          [ ("c", "1")
+          , ("p", "0.3")
+          , ("q", "c - p")
+          , ("h", "(p * q) ^ 0.5")
+          ]
+      $ productions
+          [ (match "F(x)", "F(x * p) + F(x * h) - - F(x * h) + F(x * q)")
+          ]
+  }
+  guard False
+
   runSystem2 "parametric-1" 6 90 "F(1)"
     $ withDefines
         [ ("c", "1")
@@ -369,7 +423,6 @@ main = do
     $ productions
         [ (match "F(x)", "F(x * p) + F(x * h) - - F(x * h) + F(x * q)")
         ]
-  guard False
 
   runSystem "penrose" 4 36 (singleCharWord "[N]++[N]++[N]++[N]++[N]")
     [ ("M", singleCharWord "OF++PF----NF[-OF----MF]++")
@@ -502,8 +555,10 @@ type ProjectedPoint = V2 Double
 
 data Instruction a = MovePenDown a | MovePenUp a | ChangeColor Int deriving (Show)
 
-colors :: [String]
-colors =
+defaultStrokeWidth = 0.1
+
+defaultColors :: [String]
+defaultColors =
   [ "#50514F"
   , "#109648"
   , "#CB793A"
@@ -511,6 +566,8 @@ colors =
   , "#000000"
   , "#ffff00"
   ]
+
+colors = defaultColors
 
 extrude :: Double -> (ProjectedPoint, ProjectedPoint) -> (ProjectedPoint, ProjectedPoint)
 extrude t (V2 x1 y1, V2 x2 y2) =
@@ -521,8 +578,11 @@ extrude t (V2 x1 y1, V2 x2 y2) =
 
     ( mkVec2 (x1 - sx) (y1 - sy), mkVec2 (x2 + sx) (y2 + sy))
 
-generateSvg projectF theta (LWord ls) = renderSvg svgDoc
+generateSvg p (LWord ls) = renderSvg svgDoc
   where
+    projectF = pictureProjection p
+    theta = pictureTheta p
+    strokeWidth = pictureStrokeWidth p
     thetaRads = theta / 180.0 * pi
     unprojected = toPath thetaRads ls
     is = projectF unprojected
@@ -544,7 +604,7 @@ generateSvg projectF theta (LWord ls) = renderSvg svgDoc
             S.rect ! A.x (S.toValue minX) ! A.y (S.toValue minY) ! A.width (S.toValue $ maxX - minX) ! A.height (S.toValue $ maxY - minY) ! A.fill "#CBD4C2"
             forM_ (t is) $ \(colorIndex, is') -> do
               S.path
-                ! A.style (S.toValue $ "stroke-linecap:square;stroke-width:0.1px;fill:none;stroke:" <> (colors !! (colorIndex `mod` length colors)))
+                ! A.style (S.toValue $ "stroke-linecap:square;stroke-width:" <> show strokeWidth <> "px;fill:none;stroke:" <> (colors !! (colorIndex `mod` length colors)))
                 ! A.d (mkPath $ do
                     let (MovePenUp (V2 x y):t) = reverse is'
                     m x y
