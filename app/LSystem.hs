@@ -56,78 +56,68 @@ step (LWord axiom) productions =
 stepN 0 axiom _ = axiom
 stepN n axiom rules = stepN (n - 1) (step axiom rules) rules
 
+
+runSystem :: String -> Int -> Double -> String -> [(String, String)] -> IO ()
+
+runSystem name n theta axiom ps =
+  writeFile ("output/" <> name <> ".svg")
+    $ generateSvg theta
+    $ stepN n (lword axiom) (mkProductions ps)
+
 --main = defaultMain tests
 main = do
-  writeFile "output/koch-island.svg" $ generateSvg 90.0 $
-    stepN 3 (lword "F - F - F - F") $ mkProductions [
-        ("F", "F - F + F + F F - F - F + F")
+  runSystem "koch-island" 3 90.0 "F - F - F - F" [
+      ("F", "F - F + F + F F - F - F + F")
     ]
 
-  writeFile "output/islands-lakes.svg" $ generateSvg 90.0 $
-      stepN 2 (lword "F + F + F + F") $ mkProductions [
-          ("F", "F + f - F F + F + F F + F f + F F - f + F F - F - F F - F f - F F F")
-        ]
+  runSystem "islands-lakes" 2 90.0 "F + F + F + F" [
+      ("F", "F + f - F F + F + F F + F f + F F - f + F F - F - F F - F f - F F F")
+    ]
 
-  writeFile "output/koch-tiles.svg" $ generateSvg 90.0 $
-      stepN 3 (lword "F - F - F - F") $ mkProductions [
-          ("F", "F F - F + F - F - F F")
-        ]
+  runSystem "koch-tiles" 3 90.0 "F - F - F - F" [
+      ("F", "F F - F + F - F - F F")
+    ]
 
-  writeFile "output/koch-spiral.svg" $ generateSvg 90.0 $
-      stepN 4 (lword "F - F - F - F") $ mkProductions [
-          ("F", "F - F + F - F - F")
-        ]
+  runSystem "koch-spiral" 4 90.0 "F - F - F - F" [
+      ("F", "F - F + F - F - F")
+    ]
 
-  writeFile "output/dragon-curve.svg" $ generateSvg 90.0 $
-      stepN 9 (lword "F◀") $ mkProductions [
-          ("F◀", "F◀ + F▶ +"),
-          ("F▶", "- F◀ - F▶")
-        ]
+  runSystem "dragon-curve" 9 90.0 "F◀" [
+      ("F◀", "F◀ + F▶ +"),
+      ("F▶", "- F◀ - F▶")
+    ]
 
-  writeFile "output/gosper-hex-curve.svg" $ generateSvg 60.0 $
-      stepN 4 (lword "FL") $ mkProductions [
-          ("FL", "FL + FR + + FR - FL - - FL FL - FR +"),
-          ("FR", "- FL + FR FR + + FR + FL - - FL - FR")
-        ]
+  runSystem "gosper-hex-curve" 4 60.0 "FL" [
+      ("FL", "FL + FR + + FR - FL - - FL FL - FR +"),
+      ("FR", "- FL + FR FR + + FR + FL - - FL - FR")
+    ]
 
-  writeFile "output/branching-1.svg" $ generateSvg 25.7 $
-      (stepN 4 (lword "F")
-      $ mkProductions [
-        ("F", "F [ + F ] F [ - F ] F")
-      ])
+  runSystem "branching-1" 4 25.7 "F" [
+      ("F", "F [ + F ] F [ - F ] F")
+    ]
 
-  writeFile "output/branching-2.svg" $ generateSvg 20 $
-      (stepN 4 (lword "F")
-      $ mkProductions [
-        ("F", "F [ + F ] F [ - F ] [ F ]")
-      ])
+  runSystem "branching-2" 4 20 "F" [
+      ("F", "F [ + F ] F [ - F ] [ F ]")
+    ]
 
-  writeFile "output/branching-3.svg" $ generateSvg 22.5 $
-      (stepN 4 (lword "F")
-      $ mkProductions [
-        ("F", "F F - [ - F + F + F ] + [ + F - F - F ]")
-      ])
+  runSystem "branching-3" 4 22.5 "F" [
+      ("F", "F F - [ - F + F + F ] + [ + F - F - F ]")
+    ]
 
-  writeFile "output/branching-4.svg" $ generateSvg 20 $
-      (stepN 7 (lword "X")
-      $ mkProductions [
-        ("X", "F [ + X ] F [ - X ] + X"),
-        ("F", "F F")
-      ])
+  runSystem "branching-4" 7 20 "X" [
+      ("X", "F [ + X ] F [ - X ] + X"),
+      ("F", "F F")
+    ]
 
-  writeFile "output/branching-5.svg" $ generateSvg 25.7 $
-      (stepN 6 (lword "X")
-      $ mkProductions [
-        ("X", "F [ + X ] [ - X ] F X"),
-        ("F", "F F")
-      ])
+  runSystem "branching-5" 6 25.7 "X" [
+      ("X", "F [ + X ] [ - X ] F X"),
+      ("F", "F F")
+    ]
 
-  writeFile "output/branching-6.svg" $ generateSvg 22.5 $
-      (stepN 5 (lword "X")
-      $ mkProductions [
-        ("X", "F - [ [ X ] + X ] + F [ + F X ] - X"),
-        ("F", "F F")
-      ])
+  runSystem "branching-6" 5 22.5 "X" [
+      ("X", "F - [ [ X ] + X ] + F [ + F X ] - X"),
+      ("F", "F F")
+    ]
 
 type Point = (Double, Double)
 
