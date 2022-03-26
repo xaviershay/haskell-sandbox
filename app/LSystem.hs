@@ -65,33 +65,47 @@ data MatchRule = MatchRule {
 }
 
 instance Show MatchRule where
-  show rule = show (ruleLetter rule)
+  show rule = show (ruleLetter rule) <> " (" <> show (ruleLetterPre rule) <> ", " <> show (ruleLetterPost rule) <> ")"
 
 mkRule letter = MatchRule
-  { ruleLetter = letter
+  { ruleLetter = Letter letter
   , ruleLetterPre = Nothing
   , ruleLetterPost = Nothing
   }
 
-applyRule :: MatchRule -> Letter -> Bool
-applyRule r l = ruleLetter r == l
+applyRule :: MatchRule -> LetterContext -> Bool
+applyRule r ((l, pre), post) =
+  ruleLetter r == l
+  && case ruleLetterPre r of
+       Nothing -> True
+       Just _ -> ruleLetterPre r == pre
+  && case ruleLetterPost r of
+       Nothing -> True
+       Just _ -> ruleLetterPost r == post
+
+l <| r = r { ruleLetterPre = Just l }
+r |> l = r { ruleLetterPost = Just l }
 
 lword = LWord . map Letter . words
 
-identityProduction l = Production { prodRule = mkRule l, replacement = LWord [l] }
+type LetterContext = ((Letter, Maybe Letter), Maybe Letter)
 
-matchProduction :: StatefulGen g m => [Production] -> g -> Letter -> m Production
-matchProduction ps gen l  =
-  case filter (\p -> prodRule p `applyRule` l) ps of
+identityProduction :: LetterContext -> Production
+identityProduction ((Letter l, _), _) = Production { prodRule = mkRule l, replacement = LWord [Letter l] }
+
+matchProduction :: StatefulGen g m => [Production] -> g -> LetterContext -> m Production
+matchProduction ps gen context  =
+  case filter (\p -> prodRule p `applyRule` context) ps of
     [x] -> return $ x
-    []  -> return $ identityProduction l
+    []  -> return $ identityProduction context
     xs  -> do
       i <- uniformRM (0, length xs - 1) gen
       return $ xs !! i
 
 step :: StatefulGen g m => LWord -> [Production] -> g -> m LWord
 step (LWord axiom) productions gen = do
-  parts <- mapM (matchProduction productions gen) axiom
+  let axiomWithContext = zip (zip axiom (Nothing:(map Just axiom))) ((map Just . drop 1 $ axiom) <> [Nothing])
+  parts <- mapM (matchProduction productions gen) axiomWithContext
   return $ foldl (<>) mempty $ map replacement parts
 
 stepNM :: StatefulGen g m => Int -> LWord -> [Production] -> g -> m LWord
@@ -397,7 +411,13 @@ modifyC m = modify (\(t:ts) -> (t { color = m (color t) }:ts))
 
 mkProductions :: [(String, String)] -> [Production]
 mkProductions template = map (\(l, w) -> Production {
-  prodRule = mkRule $ Letter l,
+  prodRule = mkRule l,
+  replacement = lword w
+}) template
+
+mkProductions2 :: [(MatchRule, String)] -> [Production]
+mkProductions2 template = map (\(r, w) -> Production {
+  prodRule = r,
   replacement = lword w
 }) template
 
@@ -430,16 +450,23 @@ tests = let gen = mkStdGen 42 in testGroup "L-Systems"
         ])
     ]
   , testGroup "Context-sensitive"
-    [
-   -- testCase "Trivial"
-   --   $ (lword "a a b") @=?
-   --   (stepN gen 2 (lword "b a a")
-   --   $ mkProductions
-   --       [ 
-   --      -- (Letter "b" :< Letter "a", "b")
-   --      -- , (Letter "b", "a")
-   --       ]
-   --       )
+    [ testCase "Trivial pre-condition"
+      $ (lword "a a b") @=?
+      (stepN gen 2 (lword "b a a")
+      $ mkProductions2
+          [ 
+           (Letter "b" <| mkRule "a", "b")
+          , (mkRule "b", "a")
+          ]
+          )
+    , testCase "Trivial post-condition"
+      $ (lword "b a a") @=?
+      (stepN gen 2 (lword "a a b")
+      $ mkProductions2
+          [ (mkRule "a" |> Letter "b", "b")
+          , (mkRule "b", "a")
+          ]
+          )
     ]
   ]
 
