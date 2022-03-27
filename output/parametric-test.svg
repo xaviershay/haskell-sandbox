@@ -5,7 +5,7 @@
 <svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" version="1.1" width="486.8303626617753" height="500" viewBox="-0.667214979818531 -1.6620486520866162 1.765387086669474 1.8131439840944905">
     <g>
         <rect x="-0.667214979818531" y="-1.6620486520866162" width="1.765387086669474" height="1.8131439840944905" fill="#CBD4C2" />
-        <path style="stroke-linecap:square;stroke-width:0.1px;fill:none;stroke:#50514F" d="M 0.0,0.0 L 6.123233995736766e-17,-1.0 L -0.2938926261462365,-1.4045084971874737 L -0.5200993892627415,-1.510953320078742 M 6.123233995736766e-17,-1.0 " />
-        <path style="stroke-linecap:square;stroke-width:0.1px;fill:none;stroke:#50514F" d="M 6.123233995736766e-17,-1.0 L 0.9510565162951536,-1.3090169943749475 " />
+        <path style="stroke-linecap:square;fill:none;stroke-width:0.1px;stroke:#50514F" d="M 0.0,0.0 L 6.123233995736766e-17,-1.0 L -0.2938926261462365,-1.4045084971874737 L -0.5200993892627415,-1.510953320078742 M 6.123233995736766e-17,-1.0 " />
+        <path style="stroke-linecap:square;fill:none;stroke-width:0.1px;stroke:#50514F" d="M 6.123233995736766e-17,-1.0 L 0.9510565162951536,-1.3090169943749475 " />
     </g>
 </svg>

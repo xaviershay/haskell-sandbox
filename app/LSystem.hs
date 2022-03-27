@@ -3,13 +3,14 @@
 
 module Main where
 
+import Numeric
 import Control.Applicative ((<|>))
 import System.Directory (createDirectory, removeDirectoryRecursive)
 import Debug.Trace
 import Data.Maybe (catMaybes)
 import Control.Monad (forM_, foldM, guard, when)
 import Control.Monad.State (State(..), runState, modify, evalState, get, gets)
-import Data.List (intercalate, tails, partition)
+import Data.List (intercalate, tails, partition, groupBy)
 import Data.Monoid ((<>))
 import System.Random
 import System.Random.Stateful
@@ -51,17 +52,13 @@ termExpr = (parens exprParser
              <|> ExprConst <$> paramExpr
              <|> ExprVar <$> P.many1 exprSymbolExpr
            ) <* whiteSpace
---
---table = [ [postfix "!" (Op1 Factorial), series "S", limit "lim", functionExpr, prefix "-" (Op1 Negate) ]
---        , [binary "^" (Op2 Exponent) AssocLeft ]
---        , [binary "*" (Op2 Product) AssocLeft, binary "/" (Op2 Fraction) AssocLeft, binary "" (Op2 Product) AssocLeft]
---        , [binary "+" (Op2 Sum) AssocLeft, binary "-" (\a b -> Op2 Sum a (Op1 Negate b)) AssocLeft ]
---        ]
 
+prefix name fun = Prefix (do { reservedOp name; return fun })
 binary name fun assoc = Infix (do { reservedOp name; return fun}) assoc
 
-table = [ [binary "^" (ExprOp2 Exponent) AssocLeft ]
-        , [binary "*" (ExprOp2 Product) AssocLeft, binary "/" (ExprOp2 Fraction) AssocLeft]
+table = [ [ prefix "-" (ExprOp2 Product (ExprConst (-1)))]
+        , [ binary "^" (ExprOp2 Exponent) AssocLeft ]
+        , [ binary "*" (ExprOp2 Product) AssocLeft, binary "/" (ExprOp2 Fraction) AssocLeft]
         , [ binary "+" (ExprOp2 Sum) AssocLeft
           , binary "-" (\a b -> ExprOp2 Sum a (ExprOp2 Product b (ExprConst (-1)))) AssocLeft
           ]
@@ -459,8 +456,35 @@ mkPicture name n theta axiom ps = emptyPicture {
   pictureProductions = productions ps
 }
 
-main = defaultMain tests
-main2 = do
+main2 = defaultMain tests
+main = do
+  let hondaConstants =
+        [ (0.9, 0.6, 45, 45)
+        , (0.9, 0.9, 45, 45)
+        , (0.9, 0.8, 45, 45)
+        , (0.9, 0.7, 30, -30)
+        ]
+
+  forM_ (zip hondaConstants [1..]) $ \((r1, r2, a0, a2), i) ->
+    runPicture $ (mkPicture ("honda-" <> show i) 10 1 "A(1, 10)" []) {
+      pictureStrokeWidth = 0.01,
+      pictureProjection = projectPathIso,
+      pictureProductions =
+        withDefines
+            [ ("r1", showFullPrecision r1)   -- contraction ratio for the trunk
+            , ("r2", showFullPrecision r2)   -- contraction ratio for branches
+            , ("a0", showFullPrecision a0)    -- branching angle from the trunk
+            , ("a2", showFullPrecision a2)    -- branching angle for lateral axes
+            , ("d", "137.5")  -- divergence angle
+            , ("wr", "0.707") -- width decrease rate
+            ]
+        $ productions
+          [ (match "A(l, w)", "!(w) F(l) [ &(a0) B(l*r2,w*wr)   ] /(d) A(l*r1,w*wr)")
+          , (match "B(l, w)", "!(w) F(l) [ -(a2) $ C(l*r2,w*wr) ]      C(l*r1, w*wr)")
+          , (match "C(l, w)", "!(w) F(l) [ +(a2) $ B(l*r2,w*wr) ]      B(l*r1, w*wr)")
+          ]
+    }
+
   runPicture $ (mkPicture "penrose" 4 36 (singleCharWord "[N]++[N]++[N]++[N]++[N]")
     [ (match "M", singleCharWord "OF++PF----NF[-OF----MF]++")
     , (match "N", singleCharWord "+OF--PF[---MF--NF]+")
@@ -472,24 +496,6 @@ main2 = do
       pictureStrokeWidth = 0.03
     }
 
-  guard False
-
-  runPicture $ (mkPicture "parametric-1" 6 90 "F(1)"
-    [ (match "F(x)", "F(x * p) + F(x * h) - - F(x * h) + F(x * q)")
-    ]) {
-      pictureTheta = 80
-    }
-
-  runSystem2 "parametric-1" 6 90 "F(1)"
-    $ withDefines
-        [ ("c", "1")
-        , ("p", "0.3")
-        , ("q", "c - p")
-        , ("h", "(p * q) ^ 0.5")
-        ]
-    $ productions
-        [ (match "F(x)", "F(x * p) + F(x * h) - - F(x * h) + F(x * q)")
-        ]
   runPicture $ emptyPicture {
     pictureTitle = "parametric-1",
     pictureAxiom = parseUnsafe "F(1)",
@@ -644,7 +650,12 @@ main2 = do
 type Point = V3 Double
 type ProjectedPoint = V2 Double
 
-data Instruction a = MovePenDown a | MovePenUp a | ChangeColor Int deriving (Show)
+data Instruction a =
+    MovePenDown a
+  | MovePenUp a
+  | ChangeColor Int
+  | StrokeWidth Double
+  deriving (Show)
 
 defaultStrokeWidth = 0.1
 
@@ -668,6 +679,23 @@ extrude t (V2 x1 y1, V2 x2 y2) =
   in
 
     ( mkVec2 (x1 - sx) (y1 - sy), mkVec2 (x2 + sx) (y2 + sy))
+
+showFullPrecision :: Double -> String
+showFullPrecision x = showFFloat Nothing x ""
+
+toStyle :: Picture -> [Instruction ProjectedPoint] -> String
+toStyle picture metas =
+    intercalate ";"
+  . map (\(a, b) -> a <> ":" <> b)
+  . M.toList
+  . M.fromList
+  . map toStyleAttribute
+  $ metaDefaults <> metas
+  where
+    metaDefaults = [ChangeColor 0, StrokeWidth 1]
+    cs = pictureColors picture
+    toStyleAttribute (ChangeColor n) = ("stroke", cs !! (n `mod` length cs))
+    toStyleAttribute (StrokeWidth n) = ("stroke-width", showFullPrecision (n * (pictureStrokeWidth picture)) <> "px")
 
 generateSvg p (LWord ls) = renderSvg svgDoc
   where
@@ -696,13 +724,11 @@ generateSvg p (LWord ls) = renderSvg svgDoc
         $ do
           S.g $ do
             S.rect ! A.x (S.toValue minX) ! A.y (S.toValue minY) ! A.width (S.toValue $ maxX - minX) ! A.height (S.toValue $ maxY - minY) ! A.fill "#CBD4C2"
-            forM_ (t is) $ \(colorIndex, is') -> do
+            forM_ (groupInstructionsForSvg is) $ \(metas, is') -> do
               S.path
-                ! A.style (S.toValue $ "stroke-linecap:square;stroke-width:" <> show strokeWidth <> "px;fill:none;stroke:" <> (colors !! (colorIndex `mod` length colors)))
+                ! A.style (S.toValue $ "stroke-linecap:square;fill:none;" <> toStyle p metas)
                 ! A.d (mkPath $ do
-                    let (MovePenUp (V2 x y):t) = reverse is'
-                    m x y
-                    forM_ t $ \i ->
+                    forM_ is' $ \i ->
                       case i of
                         MovePenDown (V2 x y) -> l x y
                         MovePenUp (V2 x y) -> m x y)
@@ -717,15 +743,29 @@ generateSvg p (LWord ls) = renderSvg svgDoc
           MovePenUp (V2 x y) -> mr x y
           ChangeColor _ -> return ()
 
-t :: [Instruction ProjectedPoint] -> [(Int, [Instruction ProjectedPoint])]
-t is = reverse $ foldl f ([(0, [MovePenUp (V2 0 0)])]) is
+-- lol sorry, it works though
+--
+-- Intuition is that it first groups all sequential instructions that require a
+-- new SVG path (e.g. change color) with each pen-moving instruction that comes
+-- after it.  Then it inserts a MovePenUp instruction at the start of each path
+-- that is taken from the _last_ move instruction from the previous path.
+groupInstructionsForSvg :: [Instruction ProjectedPoint] -> [([Instruction ProjectedPoint], [Instruction ProjectedPoint])]
+groupInstructionsForSvg is =
+  let
+    is' = groupBy (\x y -> isMetadata x == isMetadata y) (ChangeColor 0:is)
+    (odds, evens) = partition (\(_, i) -> i `mod` 2 == 0) (zip is' [1..])
+    combined = reverse $ zip (map fst evens) (map fst odds)
+  in
+    reverse . map (\((metas, moves),prior) -> (metas, extractLastMove prior:moves))
+      $ zip combined (drop 1 . tails $ combined)
   where
-    initPath ((MovePenDown v):_) = [MovePenUp v]
-    initPath ((MovePenUp v):_) = [MovePenUp v]
-    initPath _ = []
-    f ((style, is):rest) i = case i of
-                                  ChangeColor s -> (s, initPath is):(style, is):rest
-                                  x -> (style, x:is):rest
+    extractLastMove ts = liftPen . head . reverse . snd . head $ ts <> [([], [MovePenUp (V2 0.0 0)])]
+    liftPen (MovePenDown x) = MovePenUp x
+    liftPen (MovePenUp x) = MovePenUp x
+
+    isMetadata (MovePenDown _) = False
+    isMetadata (MovePenUp _) = False
+    isMetadata _ = True
 
 bounds is =
   let (mn, mx) = foldl (\(
@@ -745,6 +785,7 @@ projectPathIso = map f
     f (MovePenDown x) = MovePenDown $ p x
     f (MovePenUp x) = MovePenUp $ p x
     f (ChangeColor x) = ChangeColor x
+    f (StrokeWidth x) = StrokeWidth x
     p v3 = let (V3 x y _) = orthoProjection !* (isoProjection !* v3) in V2 x y
 
 projectPathOrtho :: [Instruction Point] -> [Instruction ProjectedPoint]
@@ -753,6 +794,7 @@ projectPathOrtho = map f
     f (MovePenDown x) = MovePenDown $ p x
     f (MovePenUp x) = MovePenUp $ p x
     f (ChangeColor x) = ChangeColor x
+    f (StrokeWidth x) = StrokeWidth x
     p v3 = let (V3 x y _) = orthoProjection !* v3 in V2 x y
 
 toCoords (MovePenDown c) = c
@@ -782,13 +824,15 @@ rotateH a = V3
 data TurtleState = TurtleState {
   rotateM :: V3 Point,
   position :: Point,
-  color :: Int
+  color :: Int,
+  turtleStrokeWidth :: Double
 }
 
 initialTurtle = TurtleState {
   rotateM = rotateU $ 90 / 180 * pi,
   position = V3 0 0 0,
-  color = 0
+  color = 0,
+  turtleStrokeWidth = 1
 }
 
 toPath :: Double -> [Letter] -> [Instruction Point]
@@ -844,12 +888,16 @@ toPath thetaRads ls = concat . catMaybes $ evalState (mapM fInit ls) [initialTur
       modifyC (+ 1)
       c <- gets (color . head)
       return . Just $ [ChangeColor c]
+    f ("!", a) = do
+      modifyStroke (const a)
+      return . Just $ [StrokeWidth a]
     f _ = return Nothing
     -- f unknown = error $ "unimplemented: " <> show unknown
 
 modifyP m = modify (\(t:ts) -> (t { position = position t + m }:ts))
 modifyR m = modify (\(t:ts) -> (t { rotateM = rotateM t !*! m }:ts))
 modifyC m = modify (\(t:ts) -> (t { color = m (color t) }:ts))
+modifyStroke m = modify (\(t:ts) -> (t { turtleStrokeWidth = m (turtleStrokeWidth t)}:ts))
 
 mkProductions :: [(String, String)] -> Productions
 mkProductions template = emptyProductions {
@@ -1028,12 +1076,6 @@ tests = let gen = mkStdGen 42 in testGroup "L-Systems"
       ]
     ]
   ]
-
--- ω : B(2)A(4, 4)
--- p1 : A(x, y) : y <= 3 → A(x ∗ 2, x + y)
--- p2 : A(x, y) : y > 3 → B(x)A(x/y, 0)
--- p3 : B(x) : x < 1 → C
--- p4 : B(x) : x >= 1 → B(x − 1)
 
 mkPLetter s p = PLetter { letterSymbol = s, letterParams = p }
 
