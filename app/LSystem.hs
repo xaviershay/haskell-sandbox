@@ -223,13 +223,24 @@ identityProduction ((l, _), _) = Production { prodRule = mkRule (letterSymbol l)
 
 envFromContext :: Production -> LetterContext -> Env
 envFromContext p ((l1, l2), l3) =
-  let
+    Env . M.fromList
+       $ envForLetter (Just $ ruleLetter rule) (Just l1)
+      <> envForLetter (ruleLetterPre rule) l2
+      <> envForLetter (ruleLetterPost rule) l3
+  where
     rule = prodRule p
-    paramLabels = letterParams . ruleLetter $ rule
-    paramValues = map ExprConst . letterParams $ l1
-    xs = zip paramLabels paramValues
-  in
-  Env $ M.fromList xs
+
+    envForLetter :: Maybe LetterPattern -> Maybe Letter -> [(String, Expr)]
+    envForLetter pat l =
+      case (pat, l) of
+        (Just p', Just l') ->
+          let
+            paramLabels = letterParams p'
+            paramValues = map ExprConst . letterParams $ l'
+          in
+            zip paramLabels paramValues
+        _ -> []
+
 
 emptyEnv = Env mempty
 
@@ -405,9 +416,8 @@ mkPicture name n theta axiom ps = emptyPicture {
   pictureProductions = productions ps
 }
 
-main2 = defaultMain tests
-main = do
-
+main = defaultMain tests
+main2 = do
   runPicture $ (mkPicture "penrose" 4 36 (singleCharWord "[N]++[N]++[N]++[N]++[N]")
     [ (match "M", singleCharWord "OF++PF----NF[-OF----MF]++")
     , (match "N", singleCharWord "+OF--PF[---MF--NF]+")
@@ -629,7 +639,7 @@ generateSvg p (LWord ls) = renderSvg svgDoc
     svgDoc :: S.Svg
     svgDoc =
       let
-        (V2 minX minY, V2 maxX maxY) = 
+        (V2 minX minY, V2 maxX maxY) =
           case pictureViewport p of
             ViewportBoundingRect n -> extrude n (bounds is)
             ViewportFixed x -> x
@@ -896,6 +906,21 @@ tests = let gen = mkStdGen 42 in testGroup "L-Systems"
       (stepN gen 2 (parseUnsafe "F(1)") $ withDefines [("y", "x*2")] $ productions
         [ (match "F(x)", "F(y)")
         ])
+    , testCase "Pre-conditions"
+      $ (parseUnsafe "a a b(1)") @=?
+      (stepN gen 2 (parseUnsafe "b(1) a a")
+      $ productions
+          [ ("b(x)" <| match "a", "b(x)")
+          , (match "b", "a")
+          ])
+    , testCase "Post-conditions"
+      $ (parseUnsafe "b(2) a a") @=?
+      (stepN gen 2 (parseUnsafe "a a b(2)")
+      $ productions
+          [ (match "a" |> "b(x)", "b(x)")
+          , (match "b", "a")
+          ]
+          )
     , testGroup "Parsing"
       [ testCase "One param"
           $ LWord [mkPLetter "F" [3]] @=? (parseUnsafe "F(3)")
