@@ -288,10 +288,10 @@ matchProduction ps gen context  =
     xs  ->
       case partition hasGuard xs of
         ([], xs') -> do
-          i <- uniformRM (0, length xs - 1) gen
+          i <- uniformRM (0, length xs' - 1) gen
           return $ let x = xs' !! i in (x, buildEnv x)
         (xs', _) -> do
-          i <- uniformRM (0, length xs - 1) gen
+          i <- uniformRM (0, length xs' - 1) gen
           return $ let x = xs' !! i in (x, buildEnv x)
 
 type Projection = [Instruction Point] -> [Instruction ProjectedPoint]
@@ -458,6 +458,39 @@ mkPicture name n theta axiom ps = emptyPicture {
 
 main2 = defaultMain tests
 main = do
+  runPicture $ (mkPicture "penrose-2" 2 36 (intercalate " " . replicate 5 $ "tL(1) tR(1) + +") [])
+    {
+      pictureStrokeWidth = 0.01,
+      pictureN = 9,
+      pictureProductions =
+        withDefines
+            [ ("gr", showFullPrecision (2 / (1 + sqrt(5)))) -- Golden Ratio
+            ]
+        $ productions
+            [ (match "tL(x)", "[ FtL(x, 1) + + + f(x * gr, 1, gr) + + + F(x, 1, gr) ]")
+            , (match "tR(x)", "[ FtR(x, 1) - - - f(x * gr, 1, gr) - - - F(x, 1, gr) ]")
+            , (match "TL(x)", "[ FTL(x, 1) - - F(x, 1, gr) - - - - f(x / gr, 1, gr) ]")
+            , (match "TR(x)", "[ FTR(x, 1) + + F(x, 1, gr) + + + + f(x / gr, 1, gr) ]")
+
+            , (match "FtL(x, n)" |: "n = 1", "+ f(x, 2, 1) - - - - TL(x * gr) FtL(x * gr, 2)")
+            , (match "FtL(x, n)", "FtL(x, n-1)")
+
+            , (match "FtR(x, n)" |: "n = 1", "- f(x, 2, 1) + + + + TR(x * gr) FtR(x * gr, 2)")
+            , (match "FtR(x, n)", "FtR(x, n-1)")
+
+            , (match "FTL(x, n)" |: "n = 1", "- [ f(x, 2, 1) | - TR(x * gr) tR(x * gr)  ] [ ' ' ' ' f(x / gr, 2, 1) ] F(x / gr, 2, 1) | FTL(x * gr, 2)")
+            , (match "FTL(x, n)", "FTL(x, n-1)")
+
+            , (match "FTR(x, n)" |: "n = 1", "+ [ f(x, 2, 1) | + TL(x * gr) tL(x * gr) ] [ ' ' ' ' f(x / gr, 2, 1) ] F(x / gr, 2, 1) | FTR(x * gr, 2)")
+            , (match "FTR(x, n)", "FTR(x, n-1)")
+
+            , (match "F(x, n, r)" |: "n = 1", "F(x * r, 2, r)")
+            , (match "F(x, n, r)", "F(x, n-1, r)")
+            , (match "f(x, n, r)" |: "n = 1", "f(x*r, 2, r)")
+            , (match "f(x, n, r)", "f(x, n-1, r)")
+            ]
+    }
+  guard False
   let hondaConstants =
         [ (0.9, 0.6, 45, 45)
         , (0.9, 0.9, 45, 45)
@@ -664,6 +697,7 @@ defaultColors =
   [ "#50514F"
   , "#109648"
   , "#CB793A"
+  , "#ffff00"
   , "#8D91C7"
   , "#000000"
   , "#ffff00"
@@ -848,7 +882,7 @@ toPath thetaRads ls = concat . catMaybes $ evalState (mapM fInit ls) [initialTur
       modifyP dv
       v <- gets (position . head)
       return . Just $ [MovePenDown v]
-    f ("f", a) = do
+    f (('f':_), a) = do
       rv <- gets (rotateM . head)
       let dv = rv !* (mkVec3 a 0 0)
       modifyP dv
