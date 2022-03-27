@@ -245,6 +245,7 @@ matchProduction ps gen context  =
 
 type Projection = [Instruction Point] -> [Instruction ProjectedPoint]
 
+data Viewport = ViewportFixed (ProjectedPoint, ProjectedPoint) | ViewportBoundingRect Double
 data Picture = Picture {
   pictureTitle :: String,
   pictureAxiom :: LWord Letter,
@@ -255,7 +256,8 @@ data Picture = Picture {
   pictureProductions :: Productions,
   pictureSeed :: Int,
   pictureProjection :: Projection,
-  pictureDebug :: Bool
+  pictureDebug :: Bool,
+  pictureViewport :: Viewport
 }
 
 emptyPicture = Picture {
@@ -268,7 +270,8 @@ emptyPicture = Picture {
   pictureProductions = emptyProductions,
   pictureSeed = 0,
   pictureProjection = projectPathOrtho,
-  pictureDebug = False
+  pictureDebug = False,
+  pictureViewport = ViewportBoundingRect 0.1
 }
 
 data Productions = Productions {
@@ -394,8 +397,46 @@ runSystem3D name n theta axiom ps = do
 
 singleCharWord = intercalate " " . fmap pure
 
+mkPicture name n theta axiom ps = emptyPicture {
+  pictureTitle = name,
+  pictureAxiom = parseUnsafe axiom,
+  pictureN = n,
+  pictureTheta = theta,
+  pictureProductions = productions ps
+}
+
 main2 = defaultMain tests
 main = do
+
+  runPicture $ (mkPicture "penrose" 4 36 (singleCharWord "[N]++[N]++[N]++[N]++[N]")
+    [ (match "M", singleCharWord "OF++PF----NF[-OF----MF]++")
+    , (match "N", singleCharWord "+OF--PF[---MF--NF]+")
+    , (match "O", singleCharWord "-MF++NF[+++OF++PF]-")
+    , (match "P", singleCharWord "--OF++++MF[+PF++++NF]--NF")
+    , (match "F", "")
+    ]) {
+      pictureViewport = ViewportFixed (V2 (-5) (-5), V2 5 5),
+      pictureStrokeWidth = 0.03
+    }
+
+  guard False
+
+  runPicture $ (mkPicture "parametric-1" 6 90 "F(1)"
+    [ (match "F(x)", "F(x * p) + F(x * h) - - F(x * h) + F(x * q)")
+    ]) {
+      pictureTheta = 80
+    }
+
+  runSystem2 "parametric-1" 6 90 "F(1)"
+    $ withDefines
+        [ ("c", "1")
+        , ("p", "0.3")
+        , ("q", "c - p")
+        , ("h", "(p * q) ^ 0.5")
+        ]
+    $ productions
+        [ (match "F(x)", "F(x * p) + F(x * h) - - F(x * h) + F(x * q)")
+        ]
   runPicture $ emptyPicture {
     pictureTitle = "parametric-1",
     pictureAxiom = parseUnsafe "F(1)",
@@ -428,26 +469,6 @@ main = do
           [ (match "A(s)", "F(s) [ + A(s/R) ] [ - A(s/R) ]")
           ]
   }
-  guard False
-
-  runSystem2 "parametric-1" 6 90 "F(1)"
-    $ withDefines
-        [ ("c", "1")
-        , ("p", "0.3")
-        , ("q", "c - p")
-        , ("h", "(p * q) ^ 0.5")
-        ]
-    $ productions
-        [ (match "F(x)", "F(x * p) + F(x * h) - - F(x * h) + F(x * q)")
-        ]
-
-  runSystem "penrose" 4 36 (singleCharWord "[N]++[N]++[N]++[N]++[N]")
-    [ ("M", singleCharWord "OF++PF----NF[-OF----MF]++")
-    , ("N", singleCharWord "+OF--PF[---MF--NF]+")
-    , ("O", singleCharWord "-MF++NF[+++OF++PF]-")
-    , ("P", singleCharWord "--OF++++MF[+PF++++NF]--NF")
-    , ("F", "")
-    ]
 
   runSystem2 "parametric-test" 0 36 "F [ + F(0.5) +(0.8) F(0.25) ] -(2) F" $
     productions []
@@ -608,7 +629,10 @@ generateSvg p (LWord ls) = renderSvg svgDoc
     svgDoc :: S.Svg
     svgDoc =
       let
-        (V2 minX minY, V2 maxX maxY) = extrude 0.1 (bounds is)
+        (V2 minX minY, V2 maxX maxY) = 
+          case pictureViewport p of
+            ViewportBoundingRect n -> extrude n (bounds is)
+            ViewportFixed x -> x
         aspect = (maxX - minX) / (maxY - minY)
       in
       S.docTypeSvg
