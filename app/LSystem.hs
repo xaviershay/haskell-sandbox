@@ -9,7 +9,7 @@ import Debug.Trace
 import Data.Maybe (catMaybes)
 import Control.Monad (forM_, foldM, guard, when)
 import Control.Monad.State (State(..), runState, modify, evalState, get, gets)
-import Data.List (intercalate, tails)
+import Data.List (intercalate, tails, partition)
 import Data.Monoid ((<>))
 import System.Random
 import System.Random.Stateful
@@ -99,6 +99,13 @@ pwordExprExpr = LWord <$> (whiteSpace *> P.many (letterExpr exprParser <* whiteS
 
 pwordPatternExpr = whiteSpace *> letterExpr patternExpr <* whiteSpace
 
+guardParser = do
+  lhs <- exprParser
+  operator <- foldl1 (<|>) $ map (P.try . P.string) ["=", "<=", ">=", "<", ">"]
+  rhs <- exprParser
+
+  return $ MatchGuard operator lhs rhs
+
 parseUnsafe :: String -> LWord Letter
 parseUnsafe input =
   case P.parse pwordExpr input input of
@@ -120,6 +127,12 @@ parseUnsafeWordExpr input =
 parseUnsafeExpr :: String -> Expr
 parseUnsafeExpr input =
   case P.parse exprParser input input of
+    Right x -> x
+    Left x -> error $ show x
+
+parseUnsafeGuard :: String -> MatchGuard
+parseUnsafeGuard input =
+  case P.parse (guardParser <|> pure MatchAll) input input of
     Right x -> x
     Left x -> error $ show x
 
@@ -187,21 +200,24 @@ data Production = Production {
 data MatchRule = MatchRule {
   ruleLetter :: LetterPattern,
   ruleLetterPre :: Maybe LetterPattern,
-  ruleLetterPost :: Maybe LetterPattern
-}
+  ruleLetterPost :: Maybe LetterPattern,
+  ruleGuard :: MatchGuard
+} deriving (Show)
 
-instance Show MatchRule where
-  show rule = show (ruleLetter rule) <> " (" <> show (ruleLetterPre rule) <> ", " <> show (ruleLetterPost rule) <> ")"
+data MatchGuard = MatchAll | MatchGuard String Expr Expr
+  deriving (Show, Eq)
 
 match = mkRule
 mkRule l = MatchRule
   { ruleLetter = parseUnsafePattern l
   , ruleLetterPre = Nothing
   , ruleLetterPost = Nothing
+  , ruleGuard = MatchAll
   }
 
-applyRule :: MatchRule -> LetterContext -> Bool
-applyRule r ((l, pre), post) =
+applyRule :: Env -> Production -> LetterContext -> Bool
+applyRule globalEnv prod context@((l, pre), post) =
+  let r = prodRule prod in
   letterSymbol (ruleLetter r) == letterSymbol l
   && case ruleLetterPre r of
        Nothing -> True
@@ -209,9 +225,28 @@ applyRule r ((l, pre), post) =
   && case ruleLetterPost r of
        Nothing -> True
        Just _ -> fmap letterSymbol (ruleLetterPost r) == fmap letterSymbol post
+  && case ruleGuard r of
+       MatchAll -> True
+       MatchGuard op lhs rhs ->
+         let
+           env = globalEnv <> envFromContext prod context -- TODO: Add defines
+           lhs' = eval env lhs
+           rhs' = eval env rhs
+         in
+           case op of
+             "=" -> lhs' == rhs'
+             "<" -> lhs' < rhs'
+             ">" -> lhs' > rhs'
+             "<=" -> lhs' <= rhs'
+             ">=" -> lhs' >= rhs'
+             x   -> error $ "undefined operator: " <> x
+
 
 l <| r = r { ruleLetterPre = Just (parseUnsafePattern l) }
 r |> l = r { ruleLetterPost = Just (parseUnsafePattern l) }
+
+(|:) :: MatchRule -> String -> MatchRule
+rule |: guardString = rule { ruleGuard = parseUnsafeGuard guardString }
 
 lword :: String -> LWord Letter
 lword = LWord . map letter . words
@@ -244,15 +279,23 @@ envFromContext p ((l1, l2), l3) =
 
 emptyEnv = Env mempty
 
+hasGuard :: Production -> Bool
+hasGuard = (/= MatchAll) . ruleGuard . prodRule
+
 matchProduction :: StatefulGen g m => Productions -> g -> LetterContext -> m (Production, Env)
 matchProduction ps gen context  =
   let buildEnv x = prodsDefines ps <> envFromContext x context in
-  case filter (\p -> prodRule p `applyRule` context) (prodsRules ps) of
+  case filter (\p -> applyRule (prodsDefines ps) p context) (prodsRules ps) of
     [x] -> return $ (x, buildEnv x)
     []  -> return $ (identityProduction context, emptyEnv)
-    xs  -> do
-      i <- uniformRM (0, length xs - 1) gen
-      return $ let x = xs !! i in (x, buildEnv x)
+    xs  ->
+      case partition hasGuard xs of
+        ([], xs') -> do
+          i <- uniformRM (0, length xs - 1) gen
+          return $ let x = xs' !! i in (x, buildEnv x)
+        (xs', _) -> do
+          i <- uniformRM (0, length xs - 1) gen
+          return $ let x = xs' !! i in (x, buildEnv x)
 
 type Projection = [Instruction Point] -> [Instruction ProjectedPoint]
 
@@ -919,8 +962,30 @@ tests = let gen = mkStdGen 42 in testGroup "L-Systems"
       $ productions
           [ (match "a" |> "b(x)", "b(x)")
           , (match "b", "a")
-          ]
-          )
+          ])
+    , testCase "Guards"
+      $ (parseUnsafe "b a(2) c(3) d(4)") @=?
+      (stepN gen 1 (parseUnsafe "a(1) a(2) a(3) a(4)")
+      $ productions
+          [ (match "a(x)" |: "x < 2", "b")
+          , (match "a(x)" |: "x = 3", "c(x)")
+          , (match "a(x)" |: "x >= 4", "d(x)")
+          ])
+    , testCase "Guards with defines"
+      $ (parseUnsafe "b a(2) c(3)") @=?
+      (stepN gen 1 (parseUnsafe "a(1) a(2) a(3)")
+      $ withDefines [("y", "3")]
+      $ productions
+          [ (match "a(x)" |: "x <= 1", "b")
+          , (match "a(x)" |: "x + y > 5", "c(x)")
+          ])
+    , testCase "Guard takes precedence"
+      $ (parseUnsafe "b c(2)") @=?
+      (stepN gen 1 (parseUnsafe "a(1) a(2)")
+      $ productions
+          [ (match "a(x)", "c(x)")
+          , (match "a(x)" |: "x <= 1", "b")
+          ])
     , testGroup "Parsing"
       [ testCase "One param"
           $ LWord [mkPLetter "F" [3]] @=? (parseUnsafe "F(3)")
