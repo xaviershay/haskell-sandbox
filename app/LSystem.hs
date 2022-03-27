@@ -7,7 +7,7 @@ import Control.Applicative ((<|>))
 import System.Directory (createDirectory, removeDirectoryRecursive)
 import Debug.Trace
 import Data.Maybe (catMaybes)
-import Control.Monad (forM_, foldM, guard)
+import Control.Monad (forM_, foldM, guard, when)
 import Control.Monad.State (State(..), runState, modify, evalState, get, gets)
 import Data.List (intercalate, tails)
 import Data.Monoid ((<>))
@@ -218,9 +218,8 @@ lword = LWord . map letter . words
 
 type LetterContext = ((Letter, Maybe Letter), Maybe Letter)
 
--- TODO: Fix for params
 identityProduction :: LetterContext -> Production
-identityProduction ((l, _), _) = Production { prodRule = mkRule (letterSymbol l), replacement = LWord [PLetter { letterSymbol = letterSymbol l, letterParams = []}] }
+identityProduction ((l, _), _) = Production { prodRule = mkRule (letterSymbol l), replacement = LWord [PLetter { letterSymbol = letterSymbol l, letterParams = map ExprConst $ letterParams l}] }
 
 envFromContext :: Production -> LetterContext -> Env
 envFromContext p ((l1, l2), l3) =
@@ -255,7 +254,8 @@ data Picture = Picture {
   pictureTheta :: Double,
   pictureProductions :: Productions,
   pictureSeed :: Int,
-  pictureProjection :: Projection
+  pictureProjection :: Projection,
+  pictureDebug :: Bool
 }
 
 emptyPicture = Picture {
@@ -267,7 +267,8 @@ emptyPicture = Picture {
   pictureTheta = 90,
   pictureProductions = emptyProductions,
   pictureSeed = 0,
-  pictureProjection = projectPathOrtho
+  pictureProjection = projectPathOrtho,
+  pictureDebug = False
 }
 
 data Productions = Productions {
@@ -376,6 +377,7 @@ runPicture :: Picture -> IO ()
 runPicture p = do
   let gen = mkStdGen (pictureSeed p)
   let word = stepN gen (pictureN p) (pictureAxiom p) (pictureProductions p)
+  when (pictureDebug p) (putStrLn . show $ word)
   let svg = generateSvg p word
   let filename = "output/" <> (pictureTitle p) <> ".svg"
 
@@ -409,6 +411,21 @@ main = do
           ]
       $ productions
           [ (match "F(x)", "F(x * p) + F(x * h) - - F(x * h) + F(x * q)")
+          ]
+  }
+
+  runPicture $ emptyPicture {
+    pictureTitle = "parametric-2",
+    pictureAxiom = parseUnsafe "A(1)",
+    pictureN     = 10,
+    pictureTheta = 84,
+    pictureStrokeWidth = 0.01,
+    pictureProductions =
+      withDefines
+          [ ("R", "1.456")
+          ]
+      $ productions
+          [ (match "A(s)", "F(s) [ + A(s/R) ] [ - A(s/R) ]")
           ]
   }
   guard False
