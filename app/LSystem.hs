@@ -341,7 +341,7 @@ headMaybe (x:_) = Just x
 headMaybe [] = Nothing
 
 extractPosts word ignores =
-  let f = filter (\x -> not $ x `elem` ignores) in
+  let f = filter (\x -> not $ letterSymbol x `elem` (map letterSymbol ignores)) in
   map (headMaybe . f) . drop 1 . tails $ word
 
 extractPres word = reverse . extractPosts (reverse word)
@@ -458,6 +458,35 @@ mkPicture name n theta axiom ps = emptyPicture {
 
 main2 = defaultMain tests
 main = do
+  let diamondL = "dL(x * gr) < F(x) + F(x) + + + + F(x) + F(x) >"
+  let diamondR = "dR(x * gr) < F(x) - F(x) - - - - F(x) - F(x) >"
+  let rhombusL = "rL(x * gr) < F(x) - - F(x) - - - F(x) - - F(x) >"
+  let rhombusR = "rR(x * gr) < F(x) + + F(x) + + + F(x) + + F(x) >"
+
+  runPicture $ (mkPicture "penrose-3" 2 36 (intercalate " " . replicate 5 $ "[ dL(1) ] [ dR(1) ] + + ") [])
+    {
+      pictureStrokeWidth = 0.01,
+      pictureN = 3,
+      pictureProductions =
+        withDefines
+            [ ("gr", showFullPrecision (2 / (1 + sqrt(5)))) -- Golden Ratio
+            ]
+        $ withIgnore "F + -"
+        $ productions
+            [ (match "a(x)", rhombusL)
+            , (match "dL(x)", "+ [ ' f(x / gr) ] f(x / gr) | + [ " <> rhombusL <> " ] " <> diamondL)
+            , (match "rL(x)", "- [ ' f(x / gr / gr) ] f(x / gr / gr) | [ " <> rhombusL <> " ] f(x) - [ " <> diamondR <> " ] " <> rhombusR)
+            , (match "dR(x)", "- [ ' f(x / gr) ] f(x / gr) | - [ " <> rhombusR <> " ] " <> diamondR)
+            , (match "rR(x)", "+ [ ' f(x / gr / gr) ] f(x / gr / gr) | [ " <> rhombusR <> " ] f(x) + [ " <> diamondL <> " ] " <> rhombusL)
+
+            , (match "F", "")
+            , (match "<", "")
+            , (match ">", "")
+            , ("<" <| match "+" |> ">", "")
+            , ("<" <| match "-" |> ">", "")
+            ]
+    }
+  guard False
   runPicture $ (mkPicture "penrose-2" 2 36 (intercalate " " . replicate 5 $ "tL(1) tR(1) + +") [])
     {
       pictureStrokeWidth = 0.01,
@@ -794,6 +823,7 @@ groupInstructionsForSvg is =
       $ zip combined (drop 1 . tails $ combined)
   where
     extractLastMove ts = liftPen . head . reverse . snd . head $ ts <> [([], [MovePenUp (V2 0.0 0)])]
+
     liftPen (MovePenDown x) = MovePenUp x
     liftPen (MovePenUp x) = MovePenUp x
 
@@ -1007,8 +1037,16 @@ tests = let gen = mkStdGen 42 in testGroup "L-Systems"
       $ withIgnore "+ -" $ productions
           [ (match "a" |> "b", "b")
           , (match "b", "a")
-          ]
-          )
+          ])
+    , testCase "Parametric ignore"
+      $ (parseUnsafe "+ F F(1)") @=?
+      (stepN gen 2 (parseUnsafe "+ F < + F(1) - + >")
+      $ withIgnore "+ - F" $ productions
+          [ ("<" <| match "+" |> ">", "")
+          , ("<" <| match "-" |> ">", "")
+          , (match "<", "")
+          , (match ">", "")
+          ])
     ]
   , testGroup "Parametric"
     [ testCase "Basic substitution"
