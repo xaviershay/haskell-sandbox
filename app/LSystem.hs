@@ -8,6 +8,7 @@ import Control.Applicative ((<|>))
 import System.Directory (createDirectory, removeDirectoryRecursive)
 import Debug.Trace
 import Data.Maybe (catMaybes)
+import Control.Monad.RWS hiding (Sum, Product)
 import Control.Monad (forM_, foldM, guard, when)
 import Control.Monad.State (State(..), runState, modify, evalState, get, gets)
 import Data.List (intercalate, tails, partition, groupBy)
@@ -758,20 +759,17 @@ extrude t (V2 x1 y1, V2 x2 y2) =
 showFullPrecision :: Double -> String
 showFullPrecision x = showFFloat Nothing x ""
 
-toStyle :: Picture -> [Instruction ProjectedPoint] -> String
-toStyle picture metas =
+toStyle :: Picture -> SvgPath -> String
+toStyle picture path =
     intercalate ";"
   . map (\(a, b) -> a <> ":" <> b)
-  . M.toList
-  . M.fromList
-  . map toStyleAttribute
-  $ metaDefaults <> metas
+  $ [ ("fill", maybe "none" toRGB $ pathFill path)
+    , ("stroke", toRGB $ pathStroke path)
+    , ("stroke-width", showFullPrecision (pathStrokeWidth path * (pictureStrokeWidth picture)) <> "px")
+    ]
   where
-    metaDefaults = [ChangeColor 0, StrokeWidth 1]
     cs = pictureColors picture
-    toStyleAttribute (Fill n) = ("fill", cs !! (n `mod` length cs))
-    toStyleAttribute (ChangeColor n) = ("stroke", cs !! (n `mod` length cs))
-    toStyleAttribute (StrokeWidth n) = ("stroke-width", showFullPrecision (n * (pictureStrokeWidth picture)) <> "px")
+    toRGB n = cs !! (n `mod` length cs)
 
 generateSvg p (LWord ls) = renderSvg svgDoc
   where
@@ -799,50 +797,61 @@ generateSvg p (LWord ls) = renderSvg svgDoc
         ! A.viewbox (S.toValue . intercalate " " . map show $ [minX, minY, maxX - minX, maxY - minY])
         $ do
           S.g $ do
-            S.rect ! A.x (S.toValue minX) ! A.y (S.toValue minY) ! A.width (S.toValue $ maxX - minX) ! A.height (S.toValue $ maxY - minY) ! A.fill "#CBD4C2"
-            forM_ (groupInstructionsForSvg is) $ \(metas, is') -> do
+            S.rect
+              ! A.x (S.toValue minX)
+              ! A.y (S.toValue minY)
+              ! A.width (S.toValue $ maxX - minX)
+              ! A.height (S.toValue $ maxY - minY)
+              ! A.fill "#CBD4C2"
+            forM_ (turtleToSvgPath is) $ \path -> do
               S.path
-                ! A.style (S.toValue $ "stroke-linecap:square;fill:none;" <> toStyle p metas)
+                ! A.style (S.toValue $ "stroke-linecap:square;" <> toStyle p path)
                 ! A.d (mkPath $ do
-                    forM_ is' $ \i ->
-                      case i of
-                        MovePenDown (V2 x y) -> l x y
-                        MovePenUp (V2 x y) -> m x y)
+                    let (V2 x y) = pathStart path
+                    m x y
+                    forM_ (pathPoints path) $ \(V2 x y) -> l x y)
 
+data SvgPath = SvgPath {
+  pathStart :: ProjectedPoint,
+  pathPoints :: [ProjectedPoint],
+  pathStroke :: Int,
+  pathStrokeWidth :: Double,
+  pathFill :: Maybe Int
+} deriving (Show, Eq)
 
-    turtleToPath :: S.AttributeValue
-    turtleToPath = mkPath $ do
-      m 0 0
-      forM_ is $ \i ->
-        case i of
-          MovePenDown (V2 x y) -> lr x y
-          MovePenUp (V2 x y) -> mr x y
-          ChangeColor _ -> return ()
+mkSvgPath start = SvgPath {
+  pathStart = start,
+  pathPoints = mempty,
+  pathStroke = 0,
+  pathStrokeWidth = 1,
+  pathFill = Nothing
+}
 
--- lol sorry, it works though
---
--- Intuition is that it first groups all sequential instructions that require a
--- new SVG path (e.g. change color) with each pen-moving instruction that comes
--- after it.  Then it inserts a MovePenUp instruction at the start of each path
--- that is taken from the _last_ move instruction from the previous path.
-groupInstructionsForSvg :: [Instruction ProjectedPoint] -> [([Instruction ProjectedPoint], [Instruction ProjectedPoint])]
-groupInstructionsForSvg is =
-  let
-    is' = groupBy (\x y -> isMetadata x == isMetadata y) (ChangeColor 0:is)
-    (odds, evens) = partition (\(_, i) -> i `mod` 2 == 0) (zip is' [1..])
-    combined = reverse $ zip (map fst evens) (map fst odds)
-  in
-    reverse . map (\((metas, moves),prior) -> (metas, extractLastMove prior:moves))
-      $ zip combined (drop 1 . tails $ combined)
+turtleToSvgPath :: [Instruction ProjectedPoint] -> [SvgPath]
+turtleToSvgPath is = snd $ execRWST f () (mkSvgPath (V2 0 0)) []
   where
-    extractLastMove ts = liftPen . head . reverse . snd . head $ ts <> [([], [MovePenUp (V2 0.0 0)])]
+    f = do
+      forM_ (is <> [MovePenUp (V2 0 0)]) $ \i -> do
+        pathUnderConstruction <- get
 
-    liftPen (MovePenDown x) = MovePenUp x
-    liftPen (MovePenUp x) = MovePenUp x
+        let pathStarted = not . null . pathPoints $ pathUnderConstruction
 
-    isMetadata (MovePenDown _) = False
-    isMetadata (MovePenUp _) = False
-    isMetadata _ = True
+        case i of
+          MovePenDown p -> do
+            put $ pathUnderConstruction { pathPoints = pathPoints pathUnderConstruction <> [p] }
+          _ -> do
+            when pathStarted $ do
+              tell [pathUnderConstruction]
+              -- TODO: Handle when path has no points
+              put (pathUnderConstruction {
+                     pathStart = head . reverse . pathPoints $ pathUnderConstruction,
+                     pathPoints = mempty
+                     })
+            case i of
+              MovePenUp x   -> modify (\p -> p { pathStart = x })
+              ChangeColor x -> modify (\p -> p { pathStroke = x })
+              StrokeWidth x -> modify (\p -> p { pathStrokeWidth = x })
+              Fill x        -> modify (\p -> p { pathFill = Just x })
 
 bounds is =
   let (mn, mx) = foldl (\(
@@ -1070,6 +1079,21 @@ tests = let gen = mkStdGen 42 in testGroup "L-Systems"
           , (match "<", "")
           , (match ">", "")
           ])
+    ]
+  , testGroup "Turtle to SVG"
+    [ testCase "Basic path"
+        $ [(mkSvgPath (V2 0 0)) { pathPoints = [V2 1 1] }] @=? turtleToSvgPath [MovePenDown (V2 1 1)]
+    , testCase "Setting meta-data"
+        $ [(mkSvgPath (V2 0 0)) { pathPoints = [V2 1 1], pathStroke = 1, pathStrokeWidth = 0.5, pathFill = Just 2}]
+        @=? turtleToSvgPath [ChangeColor 1, Fill 2, StrokeWidth 0.5, MovePenDown (V2 1 1)]
+    , testCase "Starts a new path when metadata changes"
+        $ [(mkSvgPath (V2 0 0)) { pathPoints = [V2 1 1], pathStroke = 1}
+          ,(mkSvgPath (V2 1 1)) { pathPoints = [V2 2 2], pathStroke = 1, pathFill = Just 2}]
+        @=? turtleToSvgPath [ChangeColor 1, MovePenDown (V2 1 1), Fill 2, MovePenDown (V2 2 2)]
+    , testCase "Starts a new path when pen up"
+        $ [(mkSvgPath (V2 0 0)) { pathPoints = [V2 1 1], pathStroke = 2}
+          ,(mkSvgPath (V2 0 0)) { pathPoints = [V2 2 2], pathStroke = 2}]
+        @=? turtleToSvgPath [ChangeColor 2, MovePenDown (V2 1 1), MovePenUp (V2 0 0), MovePenDown (V2 2 2)]
     ]
   , testGroup "Parametric"
     [ testCase "Basic substitution"
