@@ -458,15 +458,57 @@ mkPicture name n theta axiom ps = emptyPicture {
 
 main2 = defaultMain tests
 main = do
-  let diamondL = "dL(x * gr) < F(x) + F(x) + + + + F(x) + F(x) >"
-  let diamondR = "dR(x * gr) < F(x) - F(x) - - - - F(x) - F(x) >"
-  let rhombusL = "rL(x * gr) < F(x) - - F(x) - - - F(x) - - F(x) >"
-  let rhombusR = "rR(x * gr) < F(x) + + F(x) + + + F(x) + + F(x) >"
+  -- Penrose tiling using the "classic" L-System method. This works well for
+  -- stenciling the tiling, but is tricky to color since the tiles are all
+  -- drawn interspersed with one another.
+  runPicture $ (mkPicture "penrose" 4 36 (singleCharWord "[N]++[N]++[N]++[N]++[N]")
+    [ (match "M", singleCharWord "OF++PF----NF[-OF----MF]++")
+    , (match "N", singleCharWord "+OF--PF[---MF--NF]+")
+    , (match "O", singleCharWord "-MF++NF[+++OF++PF]-")
+    , (match "P", singleCharWord "--OF++++MF[+PF++++NF]--NF")
+    , (match "F", "")
+    ]) {
+      pictureViewport = ViewportFixed (V2 (-5) (-5), V2 5 5),
+      pictureStrokeWidth = 0.03
+    }
 
-  runPicture $ (mkPicture "penrose-3" 2 36 (intercalate " " . replicate 5 $ "[ dL(1) ] [ dR(1) ] + + ") [])
+  -- An alternate method based on the sub-divisions described at
+  -- https://preshing.com/20110831/penrose-tiling-explained/
+  --
+  -- For ease of coloring and comprehension, the method is split into two
+  -- "parts". The first part are the symbols {dL, dR, rL, rR} which map exactly
+  -- to the two pairs of left/right triangles needed for the method, and which
+  -- always produce a sub-division of themselves per instructions.
+  --
+  -- They always paired with turtle instruction to draw the whole shape (rather
+  -- than just the half they are tracking), but these instructions produce
+  -- nothing - in the other words they always "dissappear" and are replaced in
+  -- the next step by fresh instructions. This does result in some doubling up
+  -- along the edges, but this doesn't interfere with how they are currently
+  -- rendered.
+  --
+  -- While not strictly necessary, for cleanliness {<, >} symbols are added
+  -- such that all {+, -} symbols between them can be removed each step.
+  -- (Without this they would simply hang around redundantly at the end of the
+  -- word.) This isn't needed for {F} because that symbol is only ever used
+  -- inside of {<, >}
+  let diamondL = "dL(x * gr) < {(1) F(x) + F(x) + + + + F(x) + F(x) } >"
+  let diamondR = "dR(x * gr) < {(1) F(x) - F(x) - - - - F(x) - F(x) } >"
+  let rhombusL = "rL(x * gr) < {(2) F(x) - - F(x) - - - F(x) - - F(x) } >"
+  let rhombusR = "rR(x * gr) < {(2) F(x) + + F(x) + + + F(x) + + F(x) } >"
+
+  runPicture $ (mkPicture "penrose-2" 2 36
+    (intercalate " " . replicate 5 $ "[ dL(1) ] [ dR(1) ] + + ") [])
     {
       pictureStrokeWidth = 0.01,
-      pictureN = 3,
+      pictureN = 5,
+      -- https://coolors.co/ef476f-ffd166-06d6a0-118ab2-073b4c
+      pictureColors =
+        [ "#000000"
+        , "#EF476F"
+        , "#FFD166"
+        ],
+      pictureViewport = ViewportBoundingRect 0.05,
       pictureProductions =
         withDefines
             [ ("gr", showFullPrecision (2 / (1 + sqrt(5)))) -- Golden Ratio
@@ -474,49 +516,29 @@ main = do
         $ withIgnore "F + -"
         $ productions
             [ (match "a(x)", rhombusL)
-            , (match "dL(x)", "+ [ ' f(x / gr) ] f(x / gr) | + [ " <> rhombusL <> " ] " <> diamondL)
-            , (match "rL(x)", "- [ ' f(x / gr / gr) ] f(x / gr / gr) | [ " <> rhombusL <> " ] f(x) - [ " <> diamondR <> " ] " <> rhombusR)
-            , (match "dR(x)", "- [ ' f(x / gr) ] f(x / gr) | - [ " <> rhombusR <> " ] " <> diamondR)
-            , (match "rR(x)", "+ [ ' f(x / gr / gr) ] f(x / gr / gr) | [ " <> rhombusR <> " ] f(x) + [ " <> diamondL <> " ] " <> rhombusL)
+            -- For each of these four production rules: move the turtle to a
+            -- new corner, then draw the required sub-divisions at a smaller
+            -- scale.
+            , (match "dL(x)", "+ f(x / gr) | + [ "
+                 <> rhombusL <> " ] "
+                 <> diamondL)
+            , (match "rL(x)", "- f(x / gr / gr) | [ "
+                 <> rhombusL <> " ] f(x) - [ "
+                 <> diamondR <> " ] "
+                 <> rhombusR)
+            , (match "dR(x)", "- f(x / gr) | - [ "
+                 <> rhombusR <> " ] "
+                 <> diamondR)
+            , (match "rR(x)", "+ f(x / gr / gr) | [ "
+                 <> rhombusR <> " ] f(x) + [ "
+                 <> diamondL <> " ] "
+                 <> rhombusL)
 
-            , (match "F", "")
             , (match "<", "")
             , (match ">", "")
+            , (match "F", "")
             , ("<" <| match "+" |> ">", "")
             , ("<" <| match "-" |> ">", "")
-            ]
-    }
-  guard False
-  runPicture $ (mkPicture "penrose-2" 2 36 (intercalate " " . replicate 5 $ "tL(1) tR(1) + +") [])
-    {
-      pictureStrokeWidth = 0.01,
-      pictureN = 9,
-      pictureProductions =
-        withDefines
-            [ ("gr", showFullPrecision (2 / (1 + sqrt(5)))) -- Golden Ratio
-            ]
-        $ productions
-            [ (match "tL(x)", "[ FtL(x, 1) + + + f(x * gr, 1, gr) + + + F(x, 1, gr) ]")
-            , (match "tR(x)", "[ FtR(x, 1) - - - f(x * gr, 1, gr) - - - F(x, 1, gr) ]")
-            , (match "TL(x)", "[ FTL(x, 1) - - F(x, 1, gr) - - - - f(x / gr, 1, gr) ]")
-            , (match "TR(x)", "[ FTR(x, 1) + + F(x, 1, gr) + + + + f(x / gr, 1, gr) ]")
-
-            , (match "FtL(x, n)" |: "n = 1", "+ f(x, 2, 1) - - - - TL(x * gr) FtL(x * gr, 2)")
-            , (match "FtL(x, n)", "FtL(x, n-1)")
-
-            , (match "FtR(x, n)" |: "n = 1", "- f(x, 2, 1) + + + + TR(x * gr) FtR(x * gr, 2)")
-            , (match "FtR(x, n)", "FtR(x, n-1)")
-
-            , (match "FTL(x, n)" |: "n = 1", "- [ f(x, 2, 1) | - TR(x * gr) tR(x * gr)  ] [ ' ' ' ' f(x / gr, 2, 1) ] F(x / gr, 2, 1) | FTL(x * gr, 2)")
-            , (match "FTL(x, n)", "FTL(x, n-1)")
-
-            , (match "FTR(x, n)" |: "n = 1", "+ [ f(x, 2, 1) | + TL(x * gr) tL(x * gr) ] [ ' ' ' ' f(x / gr, 2, 1) ] F(x / gr, 2, 1) | FTR(x * gr, 2)")
-            , (match "FTR(x, n)", "FTR(x, n-1)")
-
-            , (match "F(x, n, r)" |: "n = 1", "F(x * r, 2, r)")
-            , (match "F(x, n, r)", "F(x, n-1, r)")
-            , (match "f(x, n, r)" |: "n = 1", "f(x*r, 2, r)")
-            , (match "f(x, n, r)", "f(x, n-1, r)")
             ]
     }
   guard False
@@ -545,17 +567,6 @@ main = do
           , (match "B(l, w)", "!(w) F(l) [ -(a2) $ C(l*r2,w*wr) ]      C(l*r1, w*wr)")
           , (match "C(l, w)", "!(w) F(l) [ +(a2) $ B(l*r2,w*wr) ]      B(l*r1, w*wr)")
           ]
-    }
-
-  runPicture $ (mkPicture "penrose" 4 36 (singleCharWord "[N]++[N]++[N]++[N]++[N]")
-    [ (match "M", singleCharWord "OF++PF----NF[-OF----MF]++")
-    , (match "N", singleCharWord "+OF--PF[---MF--NF]+")
-    , (match "O", singleCharWord "-MF++NF[+++OF++PF]-")
-    , (match "P", singleCharWord "--OF++++MF[+PF++++NF]--NF")
-    , (match "F", "")
-    ]) {
-      pictureViewport = ViewportFixed (V2 (-5) (-5), V2 5 5),
-      pictureStrokeWidth = 0.03
     }
 
   runPicture $ emptyPicture {
@@ -717,6 +728,7 @@ data Instruction a =
   | MovePenUp a
   | ChangeColor Int
   | StrokeWidth Double
+  | Fill Int
   deriving (Show)
 
 defaultStrokeWidth = 0.1
@@ -757,6 +769,7 @@ toStyle picture metas =
   where
     metaDefaults = [ChangeColor 0, StrokeWidth 1]
     cs = pictureColors picture
+    toStyleAttribute (Fill n) = ("fill", cs !! (n `mod` length cs))
     toStyleAttribute (ChangeColor n) = ("stroke", cs !! (n `mod` length cs))
     toStyleAttribute (StrokeWidth n) = ("stroke-width", showFullPrecision (n * (pictureStrokeWidth picture)) <> "px")
 
@@ -859,6 +872,7 @@ projectPathOrtho = map f
     f (MovePenUp x) = MovePenUp $ p x
     f (ChangeColor x) = ChangeColor x
     f (StrokeWidth x) = StrokeWidth x
+    f (Fill x) = Fill x
     p v3 = let (V3 x y _) = orthoProjection !* v3 in V2 x y
 
 toCoords (MovePenDown c) = c
@@ -889,14 +903,16 @@ data TurtleState = TurtleState {
   rotateM :: V3 Point,
   position :: Point,
   color :: Int,
-  turtleStrokeWidth :: Double
+  turtleStrokeWidth :: Double,
+  turtleFill :: Maybe Int
 }
 
 initialTurtle = TurtleState {
   rotateM = rotateU $ 90 / 180 * pi,
   position = V3 0 0 0,
   color = 0,
-  turtleStrokeWidth = 1
+  turtleStrokeWidth = 1,
+  turtleFill = Nothing
 }
 
 toPath :: Double -> [Letter] -> [Instruction Point]
@@ -955,6 +971,12 @@ toPath thetaRads ls = concat . catMaybes $ evalState (mapM fInit ls) [initialTur
     f ("!", a) = do
       modifyStroke (const a)
       return . Just $ [StrokeWidth a]
+    f ("{", a) = do
+      modifyFill (const . Just . round $ a)
+      return . Just $ [Fill . round $ a]
+    f ("}", _) = do
+      modifyFill (const Nothing)
+      return Nothing
     f _ = return Nothing
     -- f unknown = error $ "unimplemented: " <> show unknown
 
@@ -962,6 +984,7 @@ modifyP m = modify (\(t:ts) -> (t { position = position t + m }:ts))
 modifyR m = modify (\(t:ts) -> (t { rotateM = rotateM t !*! m }:ts))
 modifyC m = modify (\(t:ts) -> (t { color = m (color t) }:ts))
 modifyStroke m = modify (\(t:ts) -> (t { turtleStrokeWidth = m (turtleStrokeWidth t)}:ts))
+modifyFill m = modify (\(t:ts) -> (t { turtleFill = m (turtleFill t)}:ts))
 
 mkProductions :: [(String, String)] -> Productions
 mkProductions template = emptyProductions {
