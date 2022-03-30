@@ -27,6 +27,8 @@ import qualified Data.HashMap.Strict as M
 
 import Linear.V2
 import Linear.V3
+import Linear.Metric
+import Linear.Vector
 import Linear.Projection
 import Linear.Matrix
 
@@ -134,14 +136,17 @@ parseUnsafeGuard input =
     Right x -> x
     Left x -> error $ show x
 
-isoProjection = (1 / sqrt 6) * V3
-  (V3 (sqrt 3) 0 ((-1) * sqrt 3))
-  (V3 1 2 1)
-  (V3 (sqrt 2) ((-1) * sqrt 2) (sqrt 2))
 
+-- First transform the X/Y axis to point R/U (rather than default R/D in SVG
+-- coords), then apply standard iso projection rotations.
+isoProjection = rotateH beta !*! rotateL (pi / 4) !*! rotateL pi !*! rotateU pi
+
+beta = asin (tan ( 30.0 / 180.0 * pi))
+
+-- Flip Y axis such that positive direction is up rather than down
 orthoProjection = V3
   (V3 1.0 0 0)
-  (V3 0.0 1 0)
+  (V3 0.0 (-1) 0)
   (V3 0.0 0 0)
 
 data PLetter a = PLetter {
@@ -284,7 +289,7 @@ matchProduction :: StatefulGen g m => Productions -> g -> LetterContext -> m (Pr
 matchProduction ps gen context  =
   let buildEnv x = prodsDefines ps <> envFromContext x context in
   case filter (\p -> applyRule (prodsDefines ps) p context) (prodsRules ps) of
-    [x] -> return $ (x, buildEnv x)
+    [x] -> return $ let y  = (x, buildEnv x) in y
     []  -> return $ (identityProduction context, emptyEnv)
     xs  ->
       case partition hasGuard xs of
@@ -365,7 +370,7 @@ replacementWithContext (p, env) =
     }
 
 eval :: Env -> Expr -> Double
-eval env expr = eval' env expr
+eval env expr = let y = eval' env expr in y
 
 eval' _ (ExprConst d) = d
 eval' env@(Env varMap) (ExprVar d) = eval env (M.findWithDefault (ExprConst 0) d varMap)
@@ -432,7 +437,10 @@ runPicture :: Picture -> IO ()
 runPicture p = do
   let gen = mkStdGen (pictureSeed p)
   let word = stepN gen (pictureN p) (pictureAxiom p) (pictureProductions p)
-  when (pictureDebug p) (putStrLn . show $ word)
+  when (pictureDebug p) $ do
+    putStrLn ""
+    putStrLn ""
+    putStrLn $ "axiom: " <> show word
   let svg = generateSvg p word
   let filename = "output/" <> (pictureTitle p) <> ".svg"
 
@@ -459,6 +467,24 @@ mkPicture name n theta axiom ps = emptyPicture {
 
 main2 = defaultMain tests
 main = do
+  runPicture $ (mkPicture "aono-kunii-4" 10 1 ("A(1, 10)") []) {
+    pictureStrokeWidth = 0.01,
+    pictureDebug = False,
+    pictureProjection = projectPathIso,
+    pictureProductions =
+      withDefines
+          [ ("r1", "0.9")
+          , ("r2", "0.8")
+          , ("a1", "35")
+          , ("a2", "35")
+          , ("wr", "0.707")
+          ]
+      $ productions
+          [ ( match "A(l, w)", "!(w) F(l) [ &(a1) B(l*r1, w*wr) ] /(180) [ &(a2) B(l*r2, w*wr) ]")
+          , ( match "B(l, w)", "!(w) F(l) [ +(a1) $ B(l*r1, w*wr) ] [ -(a2) $ B(l*r2, w*wr) ]")
+          ]
+  }
+
   -- Penrose tiling using the "classic" L-System method. This works well for
   -- stenciling the tiling, but is tricky to color since the tiles are all
   -- drawn interspersed with one another.
@@ -498,10 +524,11 @@ main = do
   let rhombusL = "rL(x * gr) < {(2) F(x) - - F(x) - - - F(x) - - F(x) } >"
   let rhombusR = "rR(x * gr) < {(2) F(x) + + F(x) + + + F(x) + + F(x) } >"
 
-  runPicture $ (mkPicture "penrose-2" 2 36
+  runPicture $ (mkPicture "penrose-2" 0 36
     (intercalate " " . replicate 5 $ "[ dL(1) ] [ dR(1) ] + + ") [])
     {
       pictureStrokeWidth = 0.01,
+      pictureDebug = False,
       pictureN = 5,
       -- https://coolors.co/ef476f-ffd166-06d6a0-118ab2-073b4c
       pictureColors =
@@ -542,7 +569,7 @@ main = do
             , ("<" <| match "-" |> ">", "")
             ]
     }
-  guard False
+
   let hondaConstants =
         [ (0.9, 0.6, 45, 45)
         , (0.9, 0.9, 45, 45)
@@ -558,8 +585,8 @@ main = do
         withDefines
             [ ("r1", showFullPrecision r1)   -- contraction ratio for the trunk
             , ("r2", showFullPrecision r2)   -- contraction ratio for branches
-            , ("a0", showFullPrecision a0)    -- branching angle from the trunk
-            , ("a2", showFullPrecision a2)    -- branching angle for lateral axes
+            , ("a0", showFullPrecision a0)   -- branching angle from the trunk
+            , ("a2", showFullPrecision a2)   -- branching angle for lateral axes
             , ("d", "137.5")  -- divergence angle
             , ("wr", "0.707") -- width decrease rate
             ]
@@ -778,7 +805,8 @@ generateSvg p (LWord ls) = renderSvg svgDoc
     strokeWidth = pictureStrokeWidth p
     thetaRads = theta / 180.0 * pi
     unprojected = toPath thetaRads ls
-    is = projectF unprojected
+    tracer = if pictureDebug p then \x -> Debug.Trace.trace ("\nturtle: " <> show x) x else id
+    is = projectF $ tracer unprojected
     --is = projectF unprojected
 
     svgDoc :: S.Svg
@@ -872,7 +900,8 @@ projectPathIso = map f
     f (MovePenUp x) = MovePenUp $ p x
     f (ChangeColor x) = ChangeColor x
     f (StrokeWidth x) = StrokeWidth x
-    p v3 = let (V3 x y _) = orthoProjection !* (isoProjection !* v3) in V2 x y
+    f (Fill x) = Fill x
+    p v3 = let (V3 x y _) = (isoProjection !* v3) in V2 x y
 
 projectPathOrtho :: [Instruction Point] -> [Instruction ProjectedPoint]
 projectPathOrtho = map f
@@ -914,10 +943,12 @@ data TurtleState = TurtleState {
   color :: Int,
   turtleStrokeWidth :: Double,
   turtleFill :: Maybe Int
-}
+} deriving (Show)
 
 initialTurtle = TurtleState {
-  rotateM = rotateU $ 90 / 180 * pi,
+  -- We're making trees here, most of the time we want them to grow up, so
+  -- let's start by pointing directly along the Y-axis.
+  rotateM = (rotateU $ pi / 2.0) !*! V3 (V3 1.0 0.0 0.0) (V3 0.0 1.0 0.0) (V3 0.0 0.0 1.0),
   position = V3 0 0 0,
   color = 0,
   turtleStrokeWidth = 1,
@@ -932,16 +963,16 @@ toPath thetaRads ls = concat . catMaybes $ evalState (mapM fInit ls) [initialTur
 
     f :: (String, Double) -> State [TurtleState] (Maybe [Instruction Point])
     f (('F':_), a) = do
-      rv <- gets (rotateM . head)
-      let dv = rv !* (mkVec3 a 0 0)
-      modifyP dv
+      (V3 h _ _) <- gets (rotateM . head)
+      modifyP (h ^* a)
       v <- gets (position . head)
+
       return . Just $ [MovePenDown v]
     f (('f':_), a) = do
-      rv <- gets (rotateM . head)
-      let dv = rv !* (mkVec3 a 0 0)
-      modifyP dv
+      (V3 h _ _) <- gets (rotateM . head)
+      modifyP (h ^* a)
       v <- gets (position . head)
+
       return . Just $ [MovePenUp v]
     f ("[", _) = do
       modify (\(x:xs) -> (x:x:xs))
@@ -986,11 +1017,28 @@ toPath thetaRads ls = concat . catMaybes $ evalState (mapM fInit ls) [initialTur
     f ("}", _) = do
       modifyFill (const Nothing)
       return Nothing
+    f ("$", _) = do
+      currentR <- gets (rotateM . head)
+
+      let newRotateM = turtleDollar currentR
+
+      modify (\(t:ts) -> (t { rotateM = newRotateM }:ts))
+
+      return Nothing
     f _ = return Nothing
     -- f unknown = error $ "unimplemented: " <> show unknown
 
+turtleDollar :: V3 Point -> V3 Point
+turtleDollar (V3 h l u) =
+  let
+    v = V3 0.0 1.0 0.0
+    l' = (cross v h) ^/ (norm $ cross v h)
+    u' = cross h l'
+  in
+    (V3 h l' u')
+
 modifyP m = modify (\(t:ts) -> (t { position = position t + m }:ts))
-modifyR m = modify (\(t:ts) -> (t { rotateM = rotateM t !*! m }:ts))
+modifyR m = modify (\(t:ts) -> (t { rotateM = m !*! (rotateM t) }:ts))
 modifyC m = modify (\(t:ts) -> (t { color = m (color t) }:ts))
 modifyStroke m = modify (\(t:ts) -> (t { turtleStrokeWidth = m (turtleStrokeWidth t)}:ts))
 modifyFill m = modify (\(t:ts) -> (t { turtleFill = m (turtleFill t)}:ts))
