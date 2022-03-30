@@ -27,6 +27,8 @@ import qualified Data.HashMap.Strict as M
 
 import Linear.V2
 import Linear.V3
+import Linear.Metric
+import Linear.Vector
 import Linear.Projection
 import Linear.Matrix
 
@@ -459,6 +461,38 @@ mkPicture name n theta axiom ps = emptyPicture {
 
 main2 = defaultMain tests
 main = do
+  runPicture $ (mkPicture "test" 0 1 "F(1) &(45) \\(25) F(1) $ F(1)" []) {
+    pictureDebug = True,
+    pictureProjection = projectPathIso
+  }
+  guard False
+-- #define r1 0.9 /* contraction ratio 1 */
+-- #define r2 0.7 /* contraction ratio 2 */
+-- #define a1 10 /* branching angle 1 */
+-- #define a2 60 /* branching angle 2 */
+-- #define wr 0.707 /* width decrease rate */
+-- ω : A(1,10)
+-- p1 : A(l,w) : * → !(w)F(l)[&(a1)B(l*r1,w*wr)]
+-- /(180)[&(a2)B(l*r2,w*wr)]
+-- p2 : B(l,w) : * → !(w)F(l)[+(a1)$B(l*r1,w*wr)]
+-- [-(a2)$B(l*r2,w*wr)]
+  runPicture $ (mkPicture "aono-kunii-4" 10 1 ("A(1, 10)") []) {
+    pictureStrokeWidth = 0.01,
+    pictureProjection = projectPathIso,
+    pictureProductions =
+      withDefines
+          [ ("r1", "O.9")
+          , ("r2", "0.8")
+          , ("a1", "35")
+          , ("a2", "35")
+          , ("wr", "0.707")
+          ]
+      $ productions
+          [ ( match "A(l, w)", "!(w) F(l) [ &(a1) B(l*r1, w*wr) ] /(180) [ &(a2) B(l*r2, w*wr) ]")
+          , ( match "B(l, w)", "!(w) F(l) [ +(a1) $ B(l*r1, w*wr) ] [ -(a2) $ B(l*r2, w*wr) ]")
+          ]
+  }
+  guard False
   -- Penrose tiling using the "classic" L-System method. This works well for
   -- stenciling the tiling, but is tricky to color since the tiles are all
   -- drawn interspersed with one another.
@@ -778,7 +812,8 @@ generateSvg p (LWord ls) = renderSvg svgDoc
     strokeWidth = pictureStrokeWidth p
     thetaRads = theta / 180.0 * pi
     unprojected = toPath thetaRads ls
-    is = projectF unprojected
+    tracer = if pictureDebug p then \x -> Debug.Trace.trace (show x) x else id
+    is = projectF $ tracer unprojected
     --is = projectF unprojected
 
     svgDoc :: S.Svg
@@ -914,10 +949,10 @@ data TurtleState = TurtleState {
   color :: Int,
   turtleStrokeWidth :: Double,
   turtleFill :: Maybe Int
-}
+} deriving (Show)
 
 initialTurtle = TurtleState {
-  rotateM = rotateU $ 90 / 180 * pi,
+  rotateM = (rotateU $ pi * 3.0 / 2.0) !*! V3 (V3 1.0 0.0 0.0) (V3 0.0 1.0 0.0) (V3 0.0 0.0 1.0),
   position = V3 0 0 0,
   color = 0,
   turtleStrokeWidth = 1,
@@ -932,9 +967,11 @@ toPath thetaRads ls = concat . catMaybes $ evalState (mapM fInit ls) [initialTur
 
     f :: (String, Double) -> State [TurtleState] (Maybe [Instruction Point])
     f (('F':_), a) = do
-      rv <- gets (rotateM . head)
-      let dv = rv !* (mkVec3 a 0 0)
+      rv@(V3 h _ _) <- gets (rotateM . head)
+      let dv = h -- rv !* (mkVec3 a 0 0)
       modifyP dv
+      traceM $ "rotateM: " <> show (rv)
+      traceM $ "dv " <> show (dv)
       v <- gets (position . head)
       return . Just $ [MovePenDown v]
     f (('f':_), a) = do
@@ -986,8 +1023,28 @@ toPath thetaRads ls = concat . catMaybes $ evalState (mapM fInit ls) [initialTur
     f ("}", _) = do
       modifyFill (const Nothing)
       return Nothing
+    f ("$", _) = do
+      currentR <- gets (rotateM . head)
+
+      traceM $ "current: " <> show (currentR)
+      traceM $ "new:     " <> show (turtleDollar currentR)
+
+      let newRotateM = turtleDollar currentR
+
+      modify (\(t:ts) -> (t { rotateM = newRotateM }:ts))
+
+      return Nothing
     f _ = return Nothing
     -- f unknown = error $ "unimplemented: " <> show unknown
+
+turtleDollar :: V3 Point -> V3 Point
+turtleDollar (V3 h l u) =
+  let
+    v = V3 0.0 1.0 0.0
+    l' = (cross v h) ^/ (norm $ cross v h)
+    u' = cross h l'
+  in
+    (V3 h l' u')
 
 modifyP m = modify (\(t:ts) -> (t { position = position t + m }:ts))
 modifyR m = modify (\(t:ts) -> (t { rotateM = rotateM t !*! m }:ts))
