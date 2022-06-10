@@ -1,5 +1,4 @@
 {-# LANGUAGE DeriveGeneric #-}
-{-# LANGUAGE NumericUnderscores #-}
 {-# LANGUAGE TemplateHaskell #-}
 
 module Pinball where
@@ -76,7 +75,7 @@ resetCombo =
   mkTransition
     "reset combo"
     (setTransitions
-       [ (TargetLeft, continueCombo TargetRight 5 _000_000)
+       [ (TargetLeft, continueCombo TargetRight 5000000)
        , (TargetRight, resetCombo)
        ])
 
@@ -85,7 +84,7 @@ continueCombo nextShot points =
   mkTransition
     "continue combo"
     (setTransitions
-       [ (nextShot, continueCombo nextNextShot $ points + 1 _000_000)
+       [ (nextShot, continueCombo nextNextShot $ points + 1000000)
        , (nextNextShot, resetCombo)
        ] .
      incrementCounter CountScore points)
