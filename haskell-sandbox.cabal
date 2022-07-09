@@ -181,6 +181,7 @@ executable pinball
   build-depends:       base
                      , haskell-sandbox
                      , containers
+                     , hashable
                      , unordered-containers
                      , vector
                      , lens
