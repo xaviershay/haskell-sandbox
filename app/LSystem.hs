@@ -257,12 +257,12 @@ applyRule :: Env -> Production -> LetterContext -> Bool
 applyRule globalEnv prod context@((l, pre), post) =
   let r = prodRule prod
    in letterSymbol (ruleLetter r) == letterSymbol l &&
-      case ruleLetterPre r of
+      (case ruleLetterPre r of
         Nothing -> True
-        Just _ -> fmap letterSymbol (ruleLetterPre r) == fmap letterSymbol pre &&
-      case ruleLetterPost r of
+        Just _ -> fmap letterSymbol (ruleLetterPre r) == fmap letterSymbol pre) &&
+      (case ruleLetterPost r of
         Nothing -> True
-        Just _ -> fmap letterSymbol (ruleLetterPost r) == fmap letterSymbol post &&
+        Just _ -> fmap letterSymbol (ruleLetterPost r) == fmap letterSymbol post) &&
       case ruleGuard r of
         MatchAll -> True
         MatchGuard op lhs rhs ->
@@ -1079,7 +1079,7 @@ toPath thetaRads ls =
       return . Just $ [Fill . round $ a]
     f ("}", _) = do
       modifyFill (const Nothing)
-      return . Just $ [Fill Nothing]
+      return . Just $ [Fill 0]
     f ("$", _) = do
       currentR <- gets (rotateM . head)
       let newRotateM = turtleDollar currentR

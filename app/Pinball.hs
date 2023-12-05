@@ -1,7 +1,7 @@
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE TemplateHaskell #-}
 
-module Pinball where
+module Main where
 
 import Control.Lens
 import qualified Data.HashMap.Strict as M

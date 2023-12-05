@@ -124,6 +124,7 @@ executable axiomator
                      , haskell-sandbox
                      , parsec
                      , containers
+                     , hashable
                      , unordered-containers
                      , vector
                      , mtl
