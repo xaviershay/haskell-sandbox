@@ -191,6 +191,22 @@ executable pinball
                      , tasty-hunit
   default-language:    Haskell2010
 
+executable aoc2023
+  hs-source-dirs:      app
+  main-is:             Aoc2023.hs
+  ghc-options:         -threaded -rtsopts -with-rtsopts=-N
+  build-depends:       base
+                     , haskell-sandbox
+                     , containers
+                     , hashable
+                     , unordered-containers
+                     , vector
+                     , lens
+                     , text
+                     , tasty
+                     , tasty-hunit
+  default-language:    Haskell2010
+
 test-suite haskell-sandbox-test
   type:                exitcode-stdio-1.0
   hs-source-dirs:      test
