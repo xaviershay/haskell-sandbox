@@ -97,19 +97,19 @@ day2 = testGroup "Day 2"
 day1 = testGroup "Day 1"
     [ testCase "Example" $ do
         x <- calibrate numbersOnly "data/aoc2023/day1/example.txt"
-        x @=? 142
+        x @?= 142
     , testCase "Input" $ do
         x <- calibrate numbersOnly "data/aoc2023/day1/input.txt"
-        x @=? 56049
+        x @?= 56049
     , testCase "Part 2" $ do
         x <- calibrate numbersAndWords "data/aoc2023/day1/input.txt"
-        x @=? 54530
+        x @?= 54530
     , testCase "seekDigit" $
-        seekDigit numbersAndWords "aaonexxxtwobb" @=? 1
+        seekDigit numbersAndWords "aaonexxxtwobb" @?= 1
     , testCase "seekDigit reversed" $
         seekDigit
           (reverseMappings numbersAndWords)
-          (reverse "aaonexxxtwobb") @=? 2
+          (reverse "aaonexxxtwobb") @?= 2
     ]
   where
     calibrate values filename =
