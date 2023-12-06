@@ -4,9 +4,13 @@
 -- No consideration is given to runtime performance.
 module Main where
 
+import Debug.Trace
 import Data.Char (isDigit)
 import Data.List
+import Data.HashMap.Strict hiding (map, filter)
 import Control.Arrow (first, (&&&))
+
+import Text.Parsec
 
 import Test.Tasty
 import Test.Tasty.HUnit
@@ -14,7 +18,59 @@ import Test.Tasty.HUnit
 main = defaultMain tests
 tests = testGroup "Days"
   [ day1
+  , day2
   ]
+
+parseUnsafe :: Parsec SourceName () a -> SourceName -> a
+parseUnsafe parser input =
+  case parse parser input input of
+    Right x -> x
+    Left x -> error $ show x
+
+type Bag = HashMap String Int
+
+day2 = testGroup "Day 2"
+  [ testCase "Example" $ do
+        x <- process "data/aoc2023/day2/example.txt"
+        x @?= 8
+  , testCase "Input" $ do
+        x <- process "data/aoc2023/day2/input.txt"
+        x @?= 2512
+  ]
+  where
+    process filename =
+      sum
+      . map fst
+      . filter (validForBag $
+          fromList [("red", 12), ("green", 13), ("blue", 14)])
+      . map (parseUnsafe game)
+      . lines <$> readFile filename
+
+    validForBag :: Bag -> (Int, [Bag]) -> Bool
+    validForBag bag (_, draws) =
+      all (all (>= 0))
+      . map elems
+      . map (\draw -> unionWith (-) bag draw)
+      $ draws
+
+    -- Parsers
+    colorResult = do
+      n <- read <$> many1 digit
+      string " "
+      color <- string "red" <|> string "green" <|> string "blue"
+
+      return (color, n)
+
+    draw = fromList <$> colorResult `sepBy1` (string ", ")
+
+    game = do
+       string "Game "
+       gameId <- read <$> many1 digit
+       string ": "
+     
+       drawResult <- draw `sepBy1` string "; "
+
+       return (gameId, drawResult)
 
 day1 = testGroup "Day 1"
     [ testCase "Example" $ do
