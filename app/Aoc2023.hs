@@ -6,6 +6,7 @@ module Main where
 
 import Aoc2023.Day1
 import Aoc2023.Day2
+import Aoc2023.Day3
 
 import Test.Tasty
 
@@ -13,4 +14,5 @@ main = defaultMain tests
 tests = testGroup "Days"
   [ day1
   , day2
+  , day3
   ]
