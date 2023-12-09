@@ -1,15 +1,15 @@
-{-# LANGUAGE ScopedTypeVariables #-}
-
 module Aoc2023.Day3 where
 
 import Test.Tasty
 import Test.Tasty.HUnit
 
-import Debug.Trace
-
+import Data.Maybe (mapMaybe)
 import Data.Char (isDigit)
-import qualified Data.Vector as V
+import Data.List (groupBy, foldl', sortBy)
+import Data.Ord (comparing)
 import Data.Vector ((!))
+import qualified Data.Vector as V
+import qualified Data.HashMap.Strict as M
 import qualified Data.Set as S
 
 
@@ -17,11 +17,17 @@ type Cell = (Int, Int)
 
 day3 = testGroup "Day 3"
   [ testCase "Example" $ do
-      x <- process "data/aoc2023/day3/example.txt"
+      x <- part1 "data/aoc2023/day3/example.txt"
       x @?= 4361
   , testCase "Input" $ do
-      x <- process "data/aoc2023/day3/input.txt"
+      x <- part1 "data/aoc2023/day3/input.txt"
       x @?= 537832
+  , testCase "Example, part 2" $ do
+      x <- part2 "data/aoc2023/day3/example.txt"
+      x @?= 467835
+  , testCase "Input, part 2" $ do
+      x <- part2 "data/aoc2023/day3/input.txt"
+      x @?= 81939900
   ]
 
 locateCells f grid = V.toList $
@@ -29,12 +35,10 @@ locateCells f grid = V.toList $
     (\y row -> V.toList . V.map (\x -> (x, y)) $ V.findIndices f row)
     grid
 
-process filename = do
+part1 filename = do
   raw <- lines <$> readFile filename
 
   let grid = V.fromList (map V.fromList raw)
-  let w = length (grid ! 0)
-  let h = length (grid ! 0)
 
   let symbolLocations = concat $ locateCells isPart grid
   let numberLocations = groupAdjacent . concat $ locateCells isDigit grid
@@ -46,7 +50,6 @@ process filename = do
         . concatMap gridNeighbours
         $ symbolLocations
 
-
   let partLocations = filter
         (any (\x -> S.member x possiblePartLocations))
         numberLocations
@@ -55,8 +58,36 @@ process filename = do
 
   return result
 
+part2 filename = do
+  raw <- lines <$> readFile filename
+
+  let grid = V.fromList (map V.fromList raw)
+  let symbolLocations = concat $ locateCells (== '*') grid
+  let numberLocations = groupAdjacent . concat $ locateCells isDigit grid
+
+  let possiblePartLocations =
+        M.fromList
+        . concatMap (\x -> zip (gridNeighbours x) (repeat x))
+        $ symbolLocations
+
+  let gears =
+        map (map (toNumber grid . snd))
+        . filter ((==) 2 . length)
+        . groupBy (\x y -> fst x == fst y)
+        . sortBy (comparing fst)
+        . mapMaybe firstRef
+        . map (\cs -> (cs, mapMaybe (\c -> M.lookup c possiblePartLocations) cs))
+        $ numberLocations
+
+  let result = sum . map (foldl' (*) 1) $ gears
+
+  return result
+
+firstRef (n, (x:_)) = Just (x, n)
+firstRef _ = Nothing
+
 toNumber :: V.Vector (V.Vector Char) -> [Cell] -> Int
-toNumber grid cells = 
+toNumber grid cells =
   let digits = map (\(x, y) -> read . (:[]) $ (grid ! y) ! x) cells in
   sum . map (\(d, p) -> d * (10 ^ p)) $ zip (reverse digits) [0..]
 

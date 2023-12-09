@@ -218,6 +218,7 @@ test-suite haskell-sandbox-test
                      , tasty-quickcheck
                      , text
                      , unordered-containers
+                     , containers
                      , vector
                      , witherable
                      , hashable
