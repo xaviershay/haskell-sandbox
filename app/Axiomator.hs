@@ -654,8 +654,10 @@ runApp env m = do
 
   (t, log)
 
-initial :: AppEff effs => Term -> Eff effs ()
-initial t = put (Env t)
+initial :: Term -> Eff AllEffs ()
+initial t = do
+  tell [(t, axiomIdentity)]
+  put (Env t)
 
 focus :: Term -> Eff AllEffs () -> Eff AllEffs ()
 focus t m = do
@@ -699,6 +701,12 @@ runProcess t m = do
 -- main = defaultMain tests
 main = runSolution solution
 --main = putStrLn $ show testF
+
+solution2 = do
+  initial "a(b + c)"
+
+  apply axiomDistribute
+  apply axiomCommuteSum
 
 solution = do
   initial "lim[h->0]((sin(x+h)-sin(x))/h)"
